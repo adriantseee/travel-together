@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import DraggableEvent from './DraggableEvent';
 import ShareModal from './ShareModal';
 import { getUserColor } from './utils';
+import { supabase } from '../../lib/supabase';
 
 export default function DnDCalendar({ initialData, currentUser, onShareStatusChange, onShareWithUsers }) {
   const [currentDayIndex, setCurrentDayIndex] = useState(0);
@@ -12,6 +13,8 @@ export default function DnDCalendar({ initialData, currentUser, onShareStatusCha
   const [isAddEventModalOpen, setIsAddEventModalOpen] = useState(false);
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [isEditMode, setIsEditMode] = useState(false);
+  const [realTimeStatus, setRealTimeStatus] = useState('connecting');
+  const [activeUsers, setActiveUsers] = useState([]);
   const shareButtonRef = useRef(null);
   const [newEventData, setNewEventData] = useState({
     activity: '',
@@ -35,6 +38,7 @@ export default function DnDCalendar({ initialData, currentUser, onShareStatusCha
     name: currentUser?.name || 'Current User',
     avatar: currentUser?.avatar || `https://i.pravatar.cc/150?u=default`
   });
+  const realtimeChannelRef = useRef(null);
 
   // Initialize trip details and user from props if available
   useEffect(() => {
@@ -61,6 +65,248 @@ export default function DnDCalendar({ initialData, currentUser, onShareStatusCha
       setDays(initialDays);
     }
   }, [days.length, tripDetails.numberOfDays]);
+
+  // Load existing events from database and set up real-time sync
+  useEffect(() => {
+    if (!tripDetails.id) return;
+
+    const fetchEvents = async () => {
+      try {
+        // Fetch all events for this trip from the database
+        const { data: eventsData, error } = await supabase
+          .from('trip_events')
+          .select('*')
+          .eq('trip_id', tripDetails.id)
+          .order('time');
+
+        if (error) {
+          console.error('Error fetching events:', error);
+          return;
+        }
+
+        if (eventsData && eventsData.length > 0) {
+          // Organize events by day
+          const eventsByDay = Array(tripDetails.numberOfDays).fill().map(() => []);
+          
+          eventsData.forEach(event => {
+            const dayIndex = event.day_index || 0;
+            if (dayIndex >= 0 && dayIndex < tripDetails.numberOfDays) {
+              const processedEvent = {
+                id: event.id,
+                activity: event.activity,
+                time: event.time,
+                endTime: event.end_time,
+                createdBy: {
+                  id: event.created_by_user_id,
+                  name: event.created_by_name,
+                  avatar: event.created_by_avatar
+                },
+                createdAt: event.created_at
+              };
+              
+              eventsByDay[dayIndex].push(processedEvent);
+              
+              // Calculate and set event heights
+              setEventHeights(prev => ({
+                ...prev,
+                [event.id]: calculateEventHeight(event.time, event.end_time)
+              }));
+            }
+          });
+          
+          setDays(eventsByDay);
+        }
+      } catch (err) {
+        console.error('Failed to fetch events:', err);
+      }
+    };
+
+    fetchEvents();
+
+    console.log('Setting up real-time channel for trip:', tripDetails.id);
+    
+    // Set up real-time subscription with more logging
+    const channel = supabase
+      .channel(`trip-${tripDetails.id}`)
+      .on('presence', { event: 'sync' }, () => {
+        const presenceState = channel.presenceState();
+        const users = Object.values(presenceState).flat();
+        console.log('Presence sync:', users);
+        setActiveUsers(users);
+        setRealTimeStatus('connected');
+      })
+      .on('presence', { event: 'join' }, ({ newPresences }) => {
+        console.log('User joined:', newPresences);
+      })
+      .on('presence', { event: 'leave' }, ({ leftPresences }) => {
+        console.log('User left:', leftPresences);
+      })
+      .on('postgres_changes', { 
+        event: '*', 
+        schema: 'public', 
+        table: 'trip_events',
+        filter: `trip_id=eq.${tripDetails.id}`
+      }, (payload) => {
+        console.log('Real-time event received:', payload.eventType, payload.new?.id);
+        handleRealtimeEvent(payload);
+      })
+      .subscribe(async (status) => {
+        console.log('Channel subscription status:', status);
+        if (status === 'SUBSCRIBED') {
+          // Track presence of the current user
+          await channel.track({
+            user_id: user.id,
+            name: user.name,
+            avatar: user.avatar,
+            online_at: new Date().toISOString()
+          });
+          setRealTimeStatus('connected');
+        } else {
+          setRealTimeStatus('error');
+        }
+      });
+
+    realtimeChannelRef.current = channel;
+
+    // Cleanup subscription on unmount
+    return () => {
+      console.log('Cleaning up real-time channel');
+      if (realtimeChannelRef.current) {
+        supabase.removeChannel(realtimeChannelRef.current);
+      }
+    };
+  }, [tripDetails.id, tripDetails.numberOfDays]);
+
+  // Handle real-time database events
+  const handleRealtimeEvent = (payload) => {
+    const { eventType, new: newRecord, old: oldRecord } = payload;
+    
+    console.log('Processing real-time event:', eventType, newRecord?.id || oldRecord?.id);
+    
+    if (eventType === 'INSERT') {
+      // Add new event
+      const dayIndex = newRecord.day_index || 0;
+      
+      const newEvent = {
+        id: newRecord.id,
+        activity: newRecord.activity,
+        time: newRecord.time,
+        endTime: newRecord.end_time,
+        createdBy: {
+          id: newRecord.created_by_user_id,
+          name: newRecord.created_by_name,
+          avatar: newRecord.created_by_avatar
+        },
+        createdAt: newRecord.created_at
+      };
+      
+      // Use functional state update that doesn't depend on previous state
+      setDays(prevDays => {
+        // Create a copy of all days
+        const newDays = [...prevDays];
+        
+        // Ensure the day array exists
+        if (!newDays[dayIndex]) {
+          newDays[dayIndex] = [];
+        }
+        
+        // Remove any existing event with the same ID (prevents duplicates)
+        newDays[dayIndex] = newDays[dayIndex].filter(e => e.id !== newEvent.id);
+        
+        // Add the new event
+        newDays[dayIndex] = [...newDays[dayIndex], newEvent];
+        
+        // Sort by time
+        newDays[dayIndex].sort((a, b) => {
+          const [aHour, aMinute] = a.time.split(':').map(Number);
+          const [bHour, bMinute] = b.time.split(':').map(Number);
+          return (aHour * 60 + aMinute) - (bHour * 60 + bMinute);
+        });
+        
+        return newDays;
+      });
+      
+      // Calculate event height (this is also idempotent)
+      setEventHeights(prev => ({
+        ...prev,
+        [newRecord.id]: calculateEventHeight(newRecord.time, newRecord.end_time)
+      }));
+    }
+    
+    else if (eventType === 'UPDATE') {
+      // Update existing event in a more idempotent way
+      const oldDayIndex = oldRecord.day_index;
+      const newDayIndex = newRecord.day_index;
+      
+      const updatedEvent = {
+        id: newRecord.id,
+        activity: newRecord.activity,
+        time: newRecord.time,
+        endTime: newRecord.end_time,
+        createdBy: {
+          id: newRecord.created_by_user_id,
+          name: newRecord.created_by_name,
+          avatar: newRecord.created_by_avatar
+        },
+        createdAt: newRecord.created_at
+      };
+      
+      setDays(prev => {
+        // Create a fresh copy of all days
+        const newDays = [...prev];
+        
+        // Always remove the event from ALL days first to prevent any duplicates
+        for (let i = 0; i < newDays.length; i++) {
+          if (newDays[i]) {
+            newDays[i] = newDays[i].filter(e => e.id !== updatedEvent.id);
+          }
+        }
+        
+        // Ensure target day exists
+        if (!newDays[newDayIndex]) {
+          newDays[newDayIndex] = [];
+        }
+        
+        // Add the updated event
+        newDays[newDayIndex] = [...newDays[newDayIndex], updatedEvent];
+        
+        // Sort the target day
+        newDays[newDayIndex].sort((a, b) => {
+          const [aHour, aMinute] = a.time.split(':').map(Number);
+          const [bHour, bMinute] = b.time.split(':').map(Number);
+          return (aHour * 60 + aMinute) - (bHour * 60 + bMinute);
+        });
+        
+        return newDays;
+      });
+      
+      // Update event height
+      setEventHeights(prev => ({
+        ...prev,
+        [newRecord.id]: calculateEventHeight(newRecord.time, newRecord.end_time)
+      }));
+    }
+    
+    else if (eventType === 'DELETE') {
+      // Remove deleted event
+      const dayIndex = oldRecord.day_index;
+      
+      setDays(prev => {
+        const newDays = [...prev];
+        if (newDays[dayIndex]) {
+          newDays[dayIndex] = newDays[dayIndex].filter(e => e.id !== oldRecord.id);
+        }
+        return newDays;
+      });
+      
+      // Remove event height
+      setEventHeights(prev => {
+        const newHeights = { ...prev };
+        delete newHeights[oldRecord.id];
+        return newHeights;
+      });
+    }
+  };
 
   // Handle share button click
   const handleShareButtonClick = (e) => {
@@ -109,8 +355,8 @@ export default function DnDCalendar({ initialData, currentUser, onShareStatusCha
     return ((endTotalMinutes - startTotalMinutes) / 60) * 4;
   };
 
-  // Handle adding a new event to the current day
-  const handleAddEvent = () => {
+  // Modified handleAddEvent to save to database and broadcast to other users
+  const handleAddEvent = async () => {
     if (!newEventData.activity.trim() || !newEventData.time) {
       return;
     }
@@ -132,6 +378,7 @@ export default function DnDCalendar({ initialData, currentUser, onShareStatusCha
     
     const endTime = `${String(endHours).padStart(2, '0')}:${String(endMinutes).padStart(2, '0')}`;
     
+    // Create the new event object
     const newEvent = {
       id: newEventId,
       activity: newEventData.activity,
@@ -144,7 +391,8 @@ export default function DnDCalendar({ initialData, currentUser, onShareStatusCha
       },
       createdAt: new Date().toISOString()
     };
-    
+
+    // Add to UI immediately
     setDays(prev => {
       const newDays = [...prev];
       
@@ -173,6 +421,32 @@ export default function DnDCalendar({ initialData, currentUser, onShareStatusCha
       ...prev,
       [newEventId]: calculateEventHeight(newEventData.time, endTime)
     }));
+    
+    // Save to the database
+    try {
+      const { data, error } = await supabase
+        .from('trip_events')
+        .insert({
+          id: newEventId,
+          trip_id: tripDetails.id,
+          day_index: currentDayIndex,
+          activity: newEventData.activity,
+          time: newEventData.time,
+          end_time: endTime,
+          created_by_user_id: user.id,
+          created_by_name: user.name,
+          created_by_avatar: user.avatar,
+          created_at: new Date().toISOString()
+        });
+        
+      if (error) {
+        console.error('Error saving event to database:', error);
+      } else {
+        console.log('Event saved to database:', data);
+      }
+    } catch (err) {
+      console.error('Failed to save event:', err);
+    }
     
     // Reset new event form
     setNewEventData({
@@ -206,8 +480,23 @@ export default function DnDCalendar({ initialData, currentUser, onShareStatusCha
     });
   };
 
-  // Handle event time updates (for drag and drop)
-  const handleTimeUpdate = (eventId, newTime) => {
+  // Modified handleTimeUpdate to save changes to database
+  const handleTimeUpdate = async (eventId, newTime) => {
+    // Find the event to update
+    let eventToUpdate = null;
+    let eventDayIndex = currentDayIndex;
+    
+    for (let i = 0; i < days.length; i++) {
+      const event = days[i]?.find(e => e.id === eventId);
+      if (event) {
+        eventToUpdate = event;
+        eventDayIndex = i;
+        break;
+      }
+    }
+    
+    if (!eventToUpdate) return;
+    
     setDays(oldDays => {
       const newDays = [...oldDays];
       const currentDay = [...newDays[currentDayIndex]];
@@ -265,6 +554,28 @@ export default function DnDCalendar({ initialData, currentUser, onShareStatusCha
           timeToDecimal(a.time) - timeToDecimal(b.time)
         );
         
+        // Update in database
+        const updatedEvent = updatedDay.find(e => e.id === eventId);
+        if (updatedEvent) {
+          console.log('Sending update to database for event:', eventId);
+          
+          supabase
+            .from('trip_events')
+            .update({
+              time: updatedEvent.time,
+              end_time: updatedEvent.endTime,
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', eventId)
+            .then(({ data, error }) => {
+              if (error) {
+                console.error('Error updating event in database:', error);
+              } else {
+                console.log('Successfully updated event in database:', data);
+              }
+            });
+        }
+        
         return newDays;
       }
 
@@ -317,6 +628,24 @@ export default function DnDCalendar({ initialData, currentUser, onShareStatusCha
       }
 
       newDays[currentDayIndex] = updatedEvents;
+      
+      // Update all affected events in database
+      updatedEvents.forEach(event => {
+        supabase
+          .from('trip_events')
+          .update({
+            time: event.time,
+            end_time: event.endTime,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', event.id)
+          .then(({ error }) => {
+            if (error) {
+              console.error(`Error updating event ${event.id} in database:`, error);
+            }
+          });
+      });
+      
       return newDays;
     });
   };
@@ -348,15 +677,35 @@ export default function DnDCalendar({ initialData, currentUser, onShareStatusCha
             </div>
             <div className="flex items-center space-x-2">
               <div className="flex -space-x-2">
-                {tripDetails.participants && tripDetails.participants.map(participant => (
-                  <div key={participant.id} className="relative" title={participant.name}>
+                {/* Show active users first */}
+                {activeUsers.length > 0 && activeUsers.map(active => (
+                  <div 
+                    key={`active-${active.user_id}`} 
+                    className="relative" 
+                    title={`${active.name} (Online)`}
+                  >
                     <div
-                      className={`w-8 h-8 rounded-full border-2 border-white flex items-center justify-center text-sm font-medium ${getUserColor(participant.id || participant.name)}`}
+                      className={`w-8 h-8 rounded-full border-2 border-green-400 flex items-center justify-center text-sm font-medium ${getUserColor(active.user_id)}`}
                     >
-                      {(participant.name || 'U').charAt(0).toUpperCase()}
+                      {(active.name || 'U').charAt(0).toUpperCase()}
                     </div>
+                    <span className="absolute bottom-0 right-0 w-2 h-2 bg-green-500 rounded-full border border-white"></span>
                   </div>
                 ))}
+                
+                {/* Then show other participants */}
+                {tripDetails.participants && tripDetails.participants
+                  .filter(p => !activeUsers.some(a => a.user_id === p.id))
+                  .map(participant => (
+                    <div key={participant.id} className="relative" title={participant.name}>
+                      <div
+                        className={`w-8 h-8 rounded-full border-2 border-white flex items-center justify-center text-sm font-medium ${getUserColor(participant.id || participant.name)}`}
+                      >
+                        {(participant.name || 'U').charAt(0).toUpperCase()}
+                      </div>
+                    </div>
+                  ))
+                }
               </div>
               <button 
                 ref={shareButtonRef}
@@ -369,16 +718,38 @@ export default function DnDCalendar({ initialData, currentUser, onShareStatusCha
           </div>
           <p className="mt-2 text-sm text-blue-100 max-w-3xl">{tripDetails.description}</p>
           
-          {tripDetails.isPublic && (
-            <div className="mt-2">
+          <div className="mt-2 flex items-center gap-2">
+            {tripDetails.isPublic && (
               <span className="bg-blue-500 text-xs text-white px-2 py-1 rounded-full inline-flex items-center">
                 <svg className="w-3 h-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
                 </svg>
                 Public Itinerary
               </span>
-            </div>
-          )}
+            )}
+            
+            <span className={`text-xs px-2 py-1 rounded-full inline-flex items-center ${
+              realTimeStatus === 'connected' 
+                ? 'bg-green-500 text-white' 
+                : realTimeStatus === 'connecting' 
+                ? 'bg-yellow-500 text-white'
+                : 'bg-red-500 text-white'
+            }`}>
+              <span className={`w-2 h-2 rounded-full ${
+                realTimeStatus === 'connected' 
+                  ? 'bg-green-300 animate-pulse' 
+                  : realTimeStatus === 'connecting' 
+                  ? 'bg-yellow-300 animate-pulse'
+                  : 'bg-red-300'
+              } mr-1`}></span>
+              {realTimeStatus === 'connected' 
+                ? 'Live' 
+                : realTimeStatus === 'connecting'
+                ? 'Connecting...'
+                : 'Offline'
+              }
+            </span>
+          </div>
         </div>
       </header>
 
