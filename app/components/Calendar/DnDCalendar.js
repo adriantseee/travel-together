@@ -1619,10 +1619,10 @@ export default function DnDCalendar({ initialData, currentUser, onShareStatusCha
       return (
         <div key={i} className="absolute w-full" style={{ top: `${i * 4}rem` }}>
           <div className="flex items-center">
-            <span className={`w-10 text-sm text-gray-500`}>
+            <span className="w-10 text-sm font-medium text-gray-600 time-marker">
               {`${displayHour}:00`}
             </span>
-            <div className={`flex-grow border-t border-gray-200`}></div>
+            <div className="flex-grow border-t border-gray-200"></div>
           </div>
         </div>
       );
@@ -2093,6 +2093,34 @@ export default function DnDCalendar({ initialData, currentUser, onShareStatusCha
         .event-updated {
           animation: updatePulse 0.8s ease-out;
         }
+        
+        /* Improved colors for better readability */
+        input, select, textarea {
+          color: #1f2937 !important; /* text-gray-800 */
+          font-weight: 500 !important;
+        }
+        
+        .calendar-container .draggable-event h4 {
+          color: #111827 !important; /* text-gray-900 */
+          font-weight: 600 !important;
+        }
+        
+        /* Make time markers more visible */
+        .calendar-container .time-marker {
+          color: #4b5563 !important; /* text-gray-600 */
+          font-weight: 500 !important;
+        }
+        
+        /* Improve event background colors */
+        .calendar-container .draggable-event.personal-edit {
+          background-color: #ffedd5 !important; /* bg-orange-100 */
+          border-color: #fb923c !important; /* border-orange-400 */
+        }
+        
+        .calendar-container .draggable-event:not(.personal-edit) {
+          background-color: #f3f4f6 !important; /* bg-gray-100 */
+          border-color: #6b7280 !important; /* border-gray-500 */
+        }
       `}</style>
       
       {/* Notification */}
@@ -2481,7 +2509,7 @@ export default function DnDCalendar({ initialData, currentUser, onShareStatusCha
       {isAddEventModalOpen && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 w-96 shadow-xl">
-            <h2 className="text-xl font-semibold mb-4 text-gray-800">Add New Event</h2>
+            <h2 className="text-xl font-semibold mb-4 text-gray-900">Add New Event</h2>
             
             <div className="space-y-4">
               <div>
@@ -2492,7 +2520,7 @@ export default function DnDCalendar({ initialData, currentUser, onShareStatusCha
                   type="text"
                   value={newEventData.activity}
                   onChange={(e) => setNewEventData(prev => ({ ...prev, activity: e.target.value }))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500"
+                  className="w-full px-3 py-2 border border-gray-400 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 text-gray-900 font-medium"
                   placeholder="Enter event name"
                 />
               </div>
@@ -2505,7 +2533,7 @@ export default function DnDCalendar({ initialData, currentUser, onShareStatusCha
                   type="time"
                   value={newEventData.time}
                   onChange={(e) => setNewEventData(prev => ({ ...prev, time: e.target.value }))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500"
+                  className="w-full px-3 py-2 border border-gray-400 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 text-gray-900 font-medium"
                 />
               </div>
 
@@ -2516,7 +2544,7 @@ export default function DnDCalendar({ initialData, currentUser, onShareStatusCha
                 <select
                   value={newEventData.duration}
                   onChange={(e) => setNewEventData(prev => ({ ...prev, duration: Number(e.target.value) }))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500"
+                  className="w-full px-3 py-2 border border-gray-400 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 text-gray-900 font-medium"
                 >
                   <option value={15}>15 minutes</option>
                   <option value={30}>30 minutes</option>
@@ -2531,13 +2559,13 @@ export default function DnDCalendar({ initialData, currentUser, onShareStatusCha
               <div className="flex justify-end space-x-3 mt-6">
                 <button
                   onClick={() => setIsAddEventModalOpen(false)}
-                  className="px-4 py-2 text-gray-600 hover:text-gray-800"
+                  className="px-4 py-2 text-gray-700 hover:text-gray-900 font-medium"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={handleAddEvent}
-                  className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 transition-colors"
+                  className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors font-medium"
                 >
                   Add Event
                 </button>

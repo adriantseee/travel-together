@@ -287,52 +287,37 @@ export default function DraggableEvent({
       data-other-user={isOtherUserEdit}
       style={style}
       onMouseDown={handleMouseDown}
-      className={`px-3 py-2 rounded-md bg-white border will-change-transform
-        ${isDragging ? 'shadow-xl border-blue-400' : 'shadow-sm'} 
-        ${!isDragging && actuallyEditable && 'hover:shadow-md'} transition-all
-        ${isOtherUserEdit ? 'border-dashed border-orange-400 bg-orange-50' : ''}
-        ${isPersonalEdit ? 'border-orange-400' : ''}
-        ${actuallyEditable && 'hover:border-blue-400'}`}
+      className={`absolute rounded-md p-2 flex flex-col ${
+        isDragging ? 'shadow-lg z-50' : 'shadow-sm z-40'
+      } ${
+        actuallyEditable ? 'cursor-move' : 'cursor-default'
+      } ${
+        event.isPersonalEdit ? 'bg-orange-50 border border-orange-300' : 'bg-white border border-gray-300'
+      }`}
     >
-      <div className="text-sm font-medium mb-1 flex items-center justify-between">
-        <span className="truncate mr-2">{event.activity}</span>
-        
-        {/* Visual indicator for editing status */}
-        {isOtherUserEdit ? (
-          <span className="text-xs px-1 py-0.5 rounded bg-orange-100 text-orange-700">
-            {event.createdBy?.name || 'Other User'}
-          </span>
-        ) : isPersonalEdit ? (
-          <span className="text-xs px-1 py-0.5 rounded bg-blue-100 text-blue-700">
-            Personal
-          </span>
-        ) : actuallyEditable ? (
-          <span className="text-xs px-1 py-0.5 rounded bg-blue-100 text-blue-700">
-            Editable
-          </span>
-        ) : null}
+      <div className="flex items-start justify-between">
+        <h4 className="font-medium text-gray-900 line-clamp-2 break-words">{event.activity}</h4>
+        <div className="flex items-center gap-1">
+          <div className={`w-6 h-6 rounded-full flex items-center justify-center text-white text-xs ${getUserColor(event.createdBy?.id)}`}>
+            {getCreatorInitial()}
+          </div>
+        </div>
       </div>
       
-      <div className="flex items-center justify-between text-xs text-gray-500">
-        <div className="flex items-center">
-          <span className="mr-2">{displayTime}</span>
-          {durationLabel && <span>({durationLabel})</span>}
-        </div>
-        
-        {/* Show original creator if this is a personal copy of another user's event */}
-        {event.originalCreatedBy && event.originalCreatedBy.id !== event.createdBy?.id && (
-          <div className="flex items-center">
-            <span className="text-xs italic mr-1">From:</span>
-            <div className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-medium ${getUserColor(event.originalCreatedBy.id || event.originalCreatedBy.name)}`}>
-              {event.originalCreatedBy.name ? event.originalCreatedBy.name.charAt(0).toUpperCase() : 'U'}
-            </div>
-          </div>
+      <div className="mt-auto text-xs text-gray-700 pt-1">
+        <span className="font-medium">{displayTime}</span>
+        {event.endTime && (
+          <>
+            <span className="mx-0.5">-</span>
+            <span className="font-medium">{event.endTime}</span>
+          </>
         )}
-        {/* Show regular creator when not a personal copy or it's creator's own edit */}
-        {(!event.originalCreatedBy || event.originalCreatedBy.id === event.createdBy?.id) && creatorInitial && (
-          <div className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-medium ${userColor}`}>
-            {creatorInitial}
-          </div>
+        <span className="ml-1 text-gray-600">({getDurationLabel()})</span>
+        
+        {event.isPersonalEdit && (
+          <span className="ml-1 text-xs px-1 py-0.5 bg-orange-200 text-orange-800 rounded">
+            Private
+          </span>
         )}
       </div>
       
