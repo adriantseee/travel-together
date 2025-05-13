@@ -11,25 +11,83 @@ export default function DraggableEvent({
   columnWidth = 100,
   columnIndex = 0
 }) {
-  const [isDragging, setIsDragging] = useState(false);
-  const [displayTime, setDisplayTime] = useState(event.time);
-  const eventRef = useRef(null);
-  
-  useEffect(() => {
-    setDisplayTime(event.time);
-  }, [event.time]);
-
   const calculatePosition = (time) => {
     const [hours, minutes] = time.split(':').map(Number);
     const hourPosition = hours * 4;
     const minutePosition = (minutes / 60) * 4;
     return hourPosition + minutePosition;
   };
+  const [isDragging, setIsDragging] = useState(false);
+  const [displayTime, setDisplayTime] = useState(event.time);
+  const [position, setPosition] = useState(calculatePosition(event.time));
+  const eventRef = useRef(null);
+  const dragPositionRef = useRef(position); // Store position during drag to prevent re-renders
+  
+  // Generate a unique ID for this event element if not provided
+  const uniqueId = `event-${event.id}`;
+  
+  // Determine if this is an event that belongs to another user
+  const isOtherUserEdit = event.otherUserEdit || false;
+  
+  // Force isEditable to false if it's another user's edit
+  const actuallyEditable = isEditable && !isOtherUserEdit;
+  
+  // Add forceUpdate key to event to ensure we re-calculate the position when time changes
+  const eventKey = event.forceRender || event.lastUpdated || event.id;
+  
+  // Force position update whenever time changes, bypassing React render cycle
+  useEffect(() => {
+    const syncPositionWithTime = () => {
+      if (isDragging) return; // Skip updates while dragging
+      
+      const newPosition = calculatePosition(event.time);
+      
+      // Always set the state for initial rendering
+      setDisplayTime(event.time);
+      setPosition(newPosition);
+      dragPositionRef.current = newPosition;
+      
+      // Apply directly to DOM for immediate visual feedback
+      if (eventRef.current) {
+        // Use requestAnimationFrame for smoother visual updates
+        requestAnimationFrame(() => {
+          eventRef.current.style.transition = 'top 0.3s cubic-bezier(0.25, 1, 0.5, 1)';
+          eventRef.current.style.top = `${newPosition}rem`;
+        });
+      }
+      
+      console.log(`Event ${event.id} position synchronized to ${newPosition}rem based on time ${event.time}`);
+    };
+    
+    // Call synchronization function immediately
+    syncPositionWithTime();
+    
+    // Set up a MutationObserver to detect if the time attribute changes on the DOM element
+    if (eventRef.current) {
+      const observer = new MutationObserver((mutations) => {
+        mutations.forEach((mutation) => {
+          if (mutation.type === 'attributes' && mutation.attributeName === 'data-time') {
+            const newTime = eventRef.current.getAttribute('data-time');
+            if (newTime && newTime !== displayTime) {
+              console.log(`Observed time attribute change to ${newTime} for event ${event.id}`);
+              setDisplayTime(newTime);
+              syncPositionWithTime();
+            }
+          }
+        });
+      });
+      
+      observer.observe(eventRef.current, { attributes: true });
+      return () => observer.disconnect();
+    }
+  }, [event.time, event.id, isDragging, eventKey]);
 
+  // Snap to 10-minute intervals (smoother)
   const snapToTenMinutes = (minutes) => {
     return Math.round(minutes / 10) * 10;
   };
 
+  // Get more accurate time from position
   const getTimeFromPosition = (topRem) => {
     const totalHours = topRem / 4;
     const hours = Math.floor(totalHours);
@@ -45,7 +103,8 @@ export default function DraggableEvent({
   };
 
   const handleMouseDown = (e) => {
-    if (!isEditable || !onTimeUpdate) return; // Only allow dragging if editable
+    // Block dragging if it's not editable or specifically another user's edit
+    if (!actuallyEditable || !onTimeUpdate) return;
     
     if (e.button !== 0) return;
     e.preventDefault();
@@ -54,35 +113,99 @@ export default function DraggableEvent({
     const calendar = e.target.closest('.calendar-container');
     const calendarRect = calendar.getBoundingClientRect();
     const startY = e.clientY;
-    const startTop = calculatePosition(event.time);
+    const startTop = position; // Start from current position
+    dragPositionRef.current = startTop; // Store in ref for smoother updates
     
+    // Enter drag mode - disable transitions during drag
     setIsDragging(true);
+    if (eventRef.current) {
+      eventRef.current.style.transition = 'none';
+    }
     
     function handleDrag(moveEvent) {
+      if (!eventRef.current) return;
+      
       const deltaY = moveEvent.clientY - startY;
       const newTopRem = startTop + (deltaY / 16);
-      const snappedTopRem = Math.round(newTopRem / (4/6)) * (4/6);
       
+      // Apply 10-minute snapping
+      const snappedTopRem = Math.round(newTopRem / (4/6)) * (4/6);
       const boundedTopRem = Math.max(0, Math.min(92, snappedTopRem));
       
-      if (eventRef.current) {
-        const newTime = getTimeFromPosition(boundedTopRem);
-        eventRef.current.style.top = `${boundedTopRem}rem`;
-        setDisplayTime(newTime);
-      }
+      // Store in the ref instead of triggering state updates
+      dragPositionRef.current = boundedTopRem;
+      
+      // Update DOM directly for smooth dragging
+      eventRef.current.style.transition = 'none';
+      eventRef.current.style.top = `${boundedTopRem}rem`;
+      
+      // Update time display without causing re-renders
+      const newTime = getTimeFromPosition(boundedTopRem);
+      setDisplayTime(newTime);
     }
     
     function handleDragEnd(upEvent) {
-      const deltaY = upEvent.clientY - startY;
-      const newTopRem = startTop + (deltaY / 16);
-      const snappedTopRem = Math.round(newTopRem / (4/6)) * (4/6);
+      if (!eventRef.current) return;
       
-      const boundedTopRem = Math.max(0, Math.min(92, snappedTopRem));
+      // Use the position from the ref instead of recalculating
+      const boundedTopRem = dragPositionRef.current;
       const newTime = getTimeFromPosition(boundedTopRem);
       
-      onTimeUpdate(event.id, newTime);
+      // Update the data-time attribute to trigger the observer
+      eventRef.current.setAttribute('data-time', newTime);
       
-      setIsDragging(false);
+      // Calculate new end time to preserve original duration
+      let newEndTime = event.endTime;
+      
+      if (event.endTime) {
+        // Calculate original duration in minutes
+        const [startHours, startMinutes] = event.time.split(':').map(Number);
+        const [endHours, endMinutes] = event.endTime.split(':').map(Number);
+        
+        let durationMinutes = (endHours * 60 + endMinutes) - (startHours * 60 + startMinutes);
+        
+        // Handle cases where end time is on the next day
+        if (durationMinutes <= 0) {
+          durationMinutes += 24 * 60;
+        }
+        
+        // Calculate new end time with the same duration
+        const [newHours, newMinutes] = newTime.split(':').map(Number);
+        const newEndTotalMinutes = (newHours * 60 + newMinutes + durationMinutes) % (24 * 60);
+        
+        const newEndHours = Math.floor(newEndTotalMinutes / 60);
+        const newEndMins = newEndTotalMinutes % 60;
+        
+        // Format the new end time
+        newEndTime = `${String(newEndHours).padStart(2, '0')}:${String(newEndMins).padStart(2, '0')}`;
+      } else {
+        // If there's no end time, create one 1 hour after the start time
+        const [newHours, newMinutes] = newTime.split(':').map(Number);
+        const newEndTotalMinutes = (newHours * 60 + newMinutes + 60) % (24 * 60);
+        
+        const newEndHours = Math.floor(newEndTotalMinutes / 60);
+        const newEndMins = newEndTotalMinutes % 60;
+        
+        // Format the new end time
+        newEndTime = `${String(newEndHours).padStart(2, '0')}:${String(newEndMins).padStart(2, '0')}`;
+      }
+      
+      // Set the final position state
+      setPosition(boundedTopRem);
+      
+      // Call onTimeUpdate to save changes
+      onTimeUpdate(event.id, newTime, newEndTime);
+      
+      // Restore transition for smooth landing
+      if (eventRef.current) {
+        eventRef.current.style.transition = 'top 0.3s cubic-bezier(0.25, 1, 0.5, 1), box-shadow 0.2s ease-in-out, transform 0.2s ease-out';
+      }
+      
+      // Add a small delay before clearing the drag state to allow time for any animations
+      setTimeout(() => {
+        setIsDragging(false);
+      }, 50);
+      
       document.removeEventListener('mousemove', handleDrag);
       document.removeEventListener('mouseup', handleDragEnd);
     }
@@ -135,69 +258,110 @@ export default function DraggableEvent({
   const leftPosition = columnWidth < 100 ? `calc(${columnIndex * columnWidth}% + 4rem)` : '4rem';
   const rightPosition = columnWidth < 100 ? `calc(100% - ${(columnIndex + 1) * columnWidth}% - 1rem)` : '1rem';
   
+  // Determine if this is an event that's being edited in personal mode
+  const isPersonalEdit = event.isPersonalEdit && !isOtherUserEdit;
+  
   const style = {
     height: `${height}rem`,
     position: 'absolute',
-    top: `${calculatePosition(event.time)}rem`,
+    top: `${position}rem`, // Use state for position
     left: leftPosition,
     right: rightPosition,
-    cursor: !isEditable ? 'default' : isDragging ? 'grabbing' : 'grab',
+    cursor: !actuallyEditable ? 'default' : isDragging ? 'grabbing' : 'grab',
     userSelect: 'none',
     touchAction: 'none',
     zIndex: isDragging ? 1000 : 1,
     opacity: isDragging ? 0.9 : 1,
-    transition: isDragging ? 'none' : 'box-shadow 0.2s ease-in-out',
-    maxWidth: columnWidth < 100 ? `${columnWidth}%` : 'none'
+    transition: isDragging ? 'none' : 'top 0.3s cubic-bezier(0.25, 1, 0.5, 1), box-shadow 0.2s ease-in-out, transform 0.2s ease-out', // Smoother transitions
+    transform: isDragging ? 'scale(1.02)' : 'scale(1)',
+    maxWidth: columnWidth < 100 ? `${columnWidth}%` : 'none',
+    willChange: 'transform, top' // Optimize rendering
   };
 
   return (
     <div
       ref={eventRef}
+      id={uniqueId}
+      data-time={event.time}
+      data-editable={actuallyEditable}
+      data-other-user={isOtherUserEdit}
       style={style}
       onMouseDown={handleMouseDown}
-      className={`px-3 py-2 rounded-md bg-white border 
-        ${isDragging ? 'shadow-xl' : 'shadow-sm'} hover:shadow-md transition-shadow`}
+      className={`px-3 py-2 rounded-md bg-white border will-change-transform
+        ${isDragging ? 'shadow-xl border-blue-400' : 'shadow-sm'} 
+        ${!isDragging && actuallyEditable && 'hover:shadow-md'} transition-all
+        ${isOtherUserEdit ? 'border-dashed border-orange-400 bg-orange-50' : ''}
+        ${isPersonalEdit ? 'border-orange-400' : ''}
+        ${actuallyEditable && 'hover:border-blue-400'}`}
     >
-      <div className="flex justify-between items-start">
-        <div className={`text-sm font-medium text-gray-800`}>{event.activity}</div>
-        <div className="flex items-center">
-          {!isEditable && (
-            <span className="bg-gray-100 text-xs rounded-full px-1.5 py-0.5 mr-1 text-gray-600">View only</span>
-          )}
-          {event.createdBy && (
-            <div 
-              className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-medium ${userColor}`}
-              title={event.createdBy.name || 'User'}
-            >
-              {creatorInitial}
-            </div>
-          )}
-        </div>
+      <div className="text-sm font-medium mb-1 flex items-center justify-between">
+        <span className="truncate mr-2">{event.activity}</span>
+        
+        {/* Visual indicator for editing status */}
+        {isOtherUserEdit ? (
+          <span className="text-xs px-1 py-0.5 rounded bg-orange-100 text-orange-700">
+            {event.createdBy?.name || 'Other User'}
+          </span>
+        ) : isPersonalEdit ? (
+          <span className="text-xs px-1 py-0.5 rounded bg-blue-100 text-blue-700">
+            Personal
+          </span>
+        ) : actuallyEditable ? (
+          <span className="text-xs px-1 py-0.5 rounded bg-blue-100 text-blue-700">
+            Editable
+          </span>
+        ) : null}
       </div>
-        
-      <div className="flex items-center justify-between text-xs font-medium mt-1">
-        <div className={`flex items-center text-gray-600`}>
-          <svg className="w-3 h-3 mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-          <span>{displayTime}</span>
-          {event.endTime && (
-            <>
-              <span className="mx-1">—</span>
-              <span>{event.endTime}</span>
-            </>
-          )}
+      
+      <div className="flex items-center justify-between text-xs text-gray-500">
+        <div className="flex items-center">
+          <span className="mr-2">{displayTime}</span>
+          {durationLabel && <span>({durationLabel})</span>}
         </div>
         
-        {durationLabel && (
-          <div className={`flex items-center ml-2 text-xs text-gray-600 font-medium`}>
-            <svg className="w-3 h-3 mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            {durationLabel}
+        {/* Show original creator if this is a personal copy of another user's event */}
+        {event.originalCreatedBy && event.originalCreatedBy.id !== event.createdBy?.id && (
+          <div className="flex items-center">
+            <span className="text-xs italic mr-1">From:</span>
+            <div className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-medium ${getUserColor(event.originalCreatedBy.id || event.originalCreatedBy.name)}`}>
+              {event.originalCreatedBy.name ? event.originalCreatedBy.name.charAt(0).toUpperCase() : 'U'}
+            </div>
+          </div>
+        )}
+        {/* Show regular creator when not a personal copy or it's creator's own edit */}
+        {(!event.originalCreatedBy || event.originalCreatedBy.id === event.createdBy?.id) && creatorInitial && (
+          <div className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-medium ${userColor}`}>
+            {creatorInitial}
           </div>
         )}
       </div>
+      
+      {/* Dragging indicator */}
+      {isDragging && (
+        <div className="absolute -bottom-2 left-0 right-0 flex justify-center">
+          <div className="bg-blue-500 text-white text-xs px-2 py-0.5 rounded-full">
+            Moving to {displayTime}
+          </div>
+        </div>
+      )}
+      
+      {/* View-only indicator for other users' edits */}
+      {isOtherUserEdit && (
+        <div className="absolute -top-2 right-2">
+          <div className="bg-orange-500 text-white text-xs px-2 py-0.5 rounded-full">
+            View Only
+          </div>
+        </div>
+      )}
+      
+      {/* Original event indicator */}
+      {event.originalEventId && !isOtherUserEdit && (
+        <div className="absolute -top-2 left-2">
+          <div className="bg-purple-500 text-white text-xs px-2 py-0.5 rounded-full">
+            Personal Copy
+          </div>
+        </div>
+      )}
     </div>
   );
 } 
