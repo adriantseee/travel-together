@@ -1,9 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useCallback, memo } from 'react';
 import Link from 'next/link';
 
-export default function Sidebar({ activeScreen, onScreenChange }) {
+const Sidebar = ({ activeScreen, onScreenChange }) => {
   const navItems = [
     {
       id: 'itinerary',
@@ -34,6 +34,11 @@ export default function Sidebar({ activeScreen, onScreenChange }) {
     }
   ];
   
+  // Memoize the handle click function
+  const handleNavClick = useCallback((itemId) => {
+    onScreenChange(itemId);
+  }, [onScreenChange]);
+  
   return (
     <div className="h-screen w-20 bg-blue-700 text-white flex flex-col py-4 shadow-lg">
       <div className="flex justify-center mb-8">
@@ -51,7 +56,7 @@ export default function Sidebar({ activeScreen, onScreenChange }) {
           {navItems.map(item => (
             <li key={item.id} className="w-full">
               <button
-                onClick={() => onScreenChange(item.id)}
+                onClick={() => handleNavClick(item.id)}
                 className={`w-full py-3 flex flex-col items-center transition-colors ${
                   activeScreen === item.id 
                     ? 'bg-blue-800 text-white' 
@@ -76,4 +81,7 @@ export default function Sidebar({ activeScreen, onScreenChange }) {
       </div>
     </div>
   );
-} 
+};
+
+// Memoize the entire component to prevent unnecessary re-renders
+export default memo(Sidebar); 

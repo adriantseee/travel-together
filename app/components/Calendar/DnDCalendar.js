@@ -1,12 +1,12 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, forwardRef, useImperativeHandle } from 'react';
 import DraggableEvent from './DraggableEvent';
 import ShareModal from './ShareModal';
 import { getUserColor } from './utils';
 import { supabase } from '../../lib/supabase';
 
-export default function DnDCalendar({ initialData, currentUser, onShareStatusChange, onShareWithUsers }) {
+const DnDCalendar = forwardRef(({ initialData, currentUser, onShareStatusChange, onShareWithUsers }, ref) => {
   const [currentDayIndex, setCurrentDayIndex] = useState(0);
   const [days, setDays] = useState([]);
   const [localEditDays, setLocalEditDays] = useState(null);
@@ -2081,6 +2081,29 @@ export default function DnDCalendar({ initialData, currentUser, onShareStatusCha
     }
   };
 
+  // Expose methods to parent components through ref
+  useImperativeHandle(ref, () => ({
+    handleAddEventFromMap: (eventData) => {
+      console.log('Received event from map:', eventData);
+      
+      // Set the day index based on the event data
+      if (typeof eventData.day_index === 'number') {
+        setCurrentDayIndex(eventData.day_index);
+      }
+      
+      // Prepare event data in the format expected by the calendar
+      const newEvent = {
+        activity: eventData.activity || 'New Event',
+        time: eventData.time || '12:00',
+        duration: eventData.duration || 60
+      };
+      
+      // Set the event data and open the add event modal
+      setNewEventData(newEvent);
+      setIsAddEventModalOpen(true);
+    }
+  }));
+
   return (
     <div className="h-screen w-full bg-white flex flex-col overflow-hidden">
       <style jsx global>{`
@@ -2576,4 +2599,6 @@ export default function DnDCalendar({ initialData, currentUser, onShareStatusCha
       )}
     </div>
   );
-}
+});
+
+export default DnDCalendar;

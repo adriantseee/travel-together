@@ -97,6 +97,18 @@ export default function TripItinerary({ params }) {
         const trip = tripData && tripData.length > 0 ? tripData[0] : null;
         console.log('Trip data from RPC:', trip);
         
+        // ADD DETAILED COORDINATE DEBUGGING
+        console.log('COORDINATE INSPECTION - Trip data from DB:', {
+          tripId: trip?.id,
+          latitude: trip?.latitude,
+          longitude: trip?.longitude,
+          latitudeType: typeof trip?.latitude,
+          longitudeType: typeof trip?.longitude,
+          city: trip?.city,
+          country: trip?.country,
+          hasValidCoordinates: Boolean(trip?.latitude && trip?.longitude)
+        });
+        
         if (!trip) {
           setError('Trip not found');
           setLoading(false);
@@ -419,8 +431,20 @@ export default function TripItinerary({ params }) {
       avatar: p.user_profiles?.avatar_url || `https://i.pravatar.cc/300?u=${p.user_id}`,
       role: p.role || 'participant'
     })),
-    isPublic: trip?.community_post || false
+    isPublic: trip?.community_post || false,
+    latitude: trip?.latitude,
+    longitude: trip?.longitude,
+    country: trip?.country,
+    destination: trip?.destination
   };
+
+  // Debug the data being passed to AppLayout
+  console.log('INITIALDATA CHECK - Data being passed to AppLayout:', {
+    tripId: trip?.id,
+    latitude: trip?.latitude,
+    longitude: trip?.longitude,
+    fullTripObject: trip
+  });
 
   return (
     <AppLayout
