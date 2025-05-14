@@ -59,36 +59,72 @@ export default function Login() {
   };
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center py-2">
-      <main className="flex w-full flex-1 flex-col items-center justify-center px-4 sm:px-20">
-        <div className="w-full max-w-md space-y-8">
-          <div>
-            <h1 className="text-center text-3xl font-bold">
-              Sign in to your account
-            </h1>
+    <div className="flex min-h-screen bg-gray-50">
+      {/* Left sidebar with logo */}
+      <div className="hidden md:flex md:w-1/3 lg:w-1/4 bg-blue-700 text-white p-10 flex-col">
+        <div className="mb-8">
+          <div className="bg-white rounded-full p-2 inline-block">
+            <svg className="w-10 h-10 text-blue-700" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+            </svg>
           </div>
-          
-          {error && (
-            <div className="rounded-md bg-red-50 p-4">
-              <div className="text-sm text-red-700">{error}</div>
+          <h1 className="text-2xl font-bold mt-4">Travel Together</h1>
+          <p className="text-blue-200 mt-2">Plan and share your adventures with friends and family.</p>
+        </div>
+        
+        <div className="mt-auto">
+          <div className="bg-blue-800 p-4 rounded-lg">
+            <h3 className="font-medium mb-2">Why join us?</h3>
+            <ul className="space-y-2 text-sm text-blue-100">
+              <li className="flex items-center">
+                <svg className="w-5 h-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+                Collaborative trip planning
+              </li>
+              <li className="flex items-center">
+                <svg className="w-5 h-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+                Real-time itinerary updates
+              </li>
+              <li className="flex items-center">
+                <svg className="w-5 h-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+                Intelligent travel assistant
+              </li>
+            </ul>
+          </div>
+        </div>
+      </div>
+      
+      {/* Main content */}
+      <div className="flex-1 flex items-center justify-center p-8">
+        <div className="w-full max-w-md">
+          <div className="bg-white p-8 rounded-xl shadow-lg">
+            <div className="mb-8 text-center">
+              <h1 className="text-3xl font-bold text-gray-900">Welcome back</h1>
+              <p className="mt-2 text-gray-600">Sign in to your account to continue</p>
             </div>
-          )}
-          
-          {isLoggedIn && (
-            <div className="rounded-md bg-green-50 p-4">
-              <div className="text-sm text-green-700">
-                Login successful! If you're not redirected automatically, please
-                <a href="/dashboard" className="ml-1 font-bold text-green-800 underline">
-                  click here to go to dashboard
-                </a>.
+            
+            {error && (
+              <div className="mb-6 rounded-md bg-red-50 p-4">
+                <div className="text-sm text-red-700">{error}</div>
               </div>
-            </div>
-          )}
-          
-          <form className="mt-8 space-y-6" onSubmit={handleLogin}>
-            <div className="space-y-4 rounded-md shadow-sm">
+            )}
+            
+            {isLoggedIn && (
+              <div className="mb-6 rounded-md bg-green-50 p-4">
+                <div className="text-sm text-green-700">
+                  Login successful! Redirecting to dashboard...
+                </div>
+              </div>
+            )}
+            
+            <form className="space-y-6" onSubmit={handleLogin}>
               <div>
-                <label htmlFor="email" className="block text-sm font-medium text-gray-700">
+                <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-1">
                   Email address
                 </label>
                 <input
@@ -99,12 +135,12 @@ export default function Login() {
                   required
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-indigo-500"
+                  className="w-full px-4 py-2 rounded-md border-gray-300 focus:border-blue-500 focus:ring focus:ring-blue-200 transition-colors text-gray-900"
                 />
               </div>
               
               <div>
-                <label htmlFor="password" className="block text-sm font-medium text-gray-700">
+                <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-1">
                   Password
                 </label>
                 <input
@@ -115,32 +151,32 @@ export default function Login() {
                   required
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-indigo-500"
+                  className="w-full px-4 py-2 rounded-md border-gray-300 focus:border-blue-500 focus:ring focus:ring-blue-200 transition-colors text-gray-900"
                 />
               </div>
-            </div>
-
-            <div>
-              <button
-                type="submit"
-                disabled={loading}
-                className="group relative flex w-full justify-center rounded-md border border-transparent bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-50"
-              >
-                {loading ? 'Signing in...' : 'Sign in'}
-              </button>
-            </div>
+              
+              <div>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full py-3 px-4 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-md shadow transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50"
+                >
+                  {loading ? 'Signing in...' : 'Sign in'}
+                </button>
+              </div>
+            </form>
             
-            <div className="text-center text-sm">
-              <p>
+            <div className="mt-6 text-center">
+              <p className="text-gray-600">
                 Don't have an account?{' '}
-                <Link href="/register" className="font-medium text-indigo-600 hover:text-indigo-500">
-                  Register here
+                <Link href="/register" className="font-medium text-blue-600 hover:text-blue-500">
+                  Create one now
                 </Link>
               </p>
             </div>
-          </form>
+          </div>
         </div>
-      </main>
+      </div>
     </div>
   );
 } 

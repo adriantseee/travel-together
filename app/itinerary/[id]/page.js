@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { use } from 'react';
 import { supabase } from '../../lib/supabase';
-import DnDCalendar from '@/app/components/Calendar/DnDCalendar';
+import AppLayout from '@/app/components/Layout/AppLayout';
 
 export default function TripItinerary({ params }) {
   const tripId = params.id;
@@ -364,21 +364,20 @@ export default function TripItinerary({ params }) {
 
   if (loading) {
     return (
-      <div className="flex min-h-screen flex-col items-center justify-center">
-        <p>Loading trip details...</p>
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-blue-500"></div>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="flex min-h-screen flex-col items-center justify-center">
-        <div className="bg-red-50 p-4 rounded-md">
-          <p className="text-red-700">Error: {error}</p>
-          <Link href="/dashboard" className="text-blue-600 hover:underline mt-2 inline-block">
-            Return to Dashboard
-          </Link>
-        </div>
+      <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 px-4">
+        <div className="text-red-500 text-xl mb-4">{error}</div>
+        <p className="mb-6 text-gray-600">You may not have access to this trip or it may not exist.</p>
+        <Link href="/dashboard" className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 transition-colors">
+          Back to Dashboard
+        </Link>
       </div>
     );
   }
@@ -396,14 +395,6 @@ export default function TripItinerary({ params }) {
     );
   }
 
-  // Format participants for the calendar component
-  const formattedParticipants = participants.map(participant => ({
-    id: participant.user_id,
-    name: participant.user_profiles?.name || 'Unknown User',
-    avatar: participant.user_profiles?.avatar_url || null,
-    role: participant.role || 'viewer'
-  }));
-
   // Calculate trip duration in days
   const calculateTripDuration = () => {
     if (!trip.start_date || !trip.end_date) return 3; // Default to 3 days if dates not set
@@ -415,50 +406,28 @@ export default function TripItinerary({ params }) {
     return diffDays + 1; // Include both start and end date
   };
 
-  // Update calendarInitialData to include isPublic status
-  const calendarInitialData = {
-    id: trip.id,
-    name: trip.name,
-    city: trip.destination || 'Destination',
-    description: trip.description || 'No description provided',
+  // Format trip data for the calendar
+  const tripDetails = {
+    id: trip?.id,
+    name: trip?.name,
+    city: trip?.destination,
+    description: trip?.description,
     numberOfDays: calculateTripDuration(),
-    participants: formattedParticipants.length > 0 ? formattedParticipants : undefined,
-    isPublic: trip.community_post || false
+    participants: participants?.map(p => ({
+      id: p.user_id,
+      name: p.user_profiles?.name || 'Anonymous',
+      avatar: p.user_profiles?.avatar_url || `https://i.pravatar.cc/300?u=${p.user_id}`,
+      role: p.role || 'participant'
+    })),
+    isPublic: trip?.community_post || false
   };
 
   return (
-    <div className="h-screen flex flex-col overflow-hidden">
-      <nav className="bg-white border-b border-gray-200 p-3 flex items-center justify-between">
-        <Link href="/dashboard" className="text-sm text-blue-600 hover:text-blue-800 flex items-center">
-          <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-          </svg>
-          Back to Dashboard
-        </Link>
-        
-        <span className="text-sm text-gray-500">
-          {trip.start_date && (
-            <>
-              {new Date(trip.start_date).toLocaleDateString()} - 
-              {trip.end_date ? new Date(trip.end_date).toLocaleDateString() : 'TBD'}
-            </>
-          )}
-        </span>
-      </nav>
-      
-      <div className="flex-1 overflow-hidden relative">
-        {(isSharingToPublic || isSharingWithUsers) && (
-          <div className="absolute top-0 left-0 right-0 bg-blue-600 text-white text-center py-1 z-50 text-sm">
-            {isSharingToPublic ? 'Updating sharing status...' : 'Sharing with users...'}
-          </div>
-        )}
-        <DnDCalendar 
-          initialData={calendarInitialData} 
-          currentUser={currentUser}
-          onShareStatusChange={handleShareStatusChange}
-          onShareWithUsers={handleShareWithUsers}
-        />
-      </div>
-    </div>
+    <AppLayout
+      initialData={tripDetails}
+      currentUser={currentUser}
+      onShareStatusChange={handleShareStatusChange}
+      onShareWithUsers={handleShareWithUsers}
+    />
   );
 } 
