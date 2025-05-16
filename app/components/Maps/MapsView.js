@@ -385,6 +385,12 @@ export default function MapsView({ tripDetails, onAddEvent }) {
   const [containerReady, setContainerReady] = useState(false);
   const [useFixedContainer, setUseFixedContainer] = useState(false);
   
+  // State for multi-stop routing
+  const [isRoutingMode, setIsRoutingMode] = useState(false);
+  const [routingPoints, setRoutingPoints] = useState([]); // Array of {lng, lat}
+  const [multiStopRouteDetails, setMultiStopRouteDetails] = useState(null); // { path: [], duration: 0, distance: 0 }
+  const [routingPointMarkers, setRoutingPointMarkers] = useState([]); // Array of Mapbox marker instances
+  
   // Constants
   const fixedContainerId = 'fixed-mapbox-container';
   
@@ -1661,33 +1667,64 @@ export default function MapsView({ tripDetails, onAddEvent }) {
     // Enhanced popup HTML with more details
     let popupHtml = `
       <div class="place-popup" style="min-width: 200px; max-width: 300px;">
-        <strong style="display: block; margin-bottom: 5px; font-size: 16px;">${attraction.name}</strong>
+        <strong style="display: block; margin-bottom: 5px; font-size: 16px; color: #1a202c;">${attraction.name}</strong>
         <div style="display: flex; align-items: center; margin-bottom: 5px;">
           <span style="color: #f8b400;">${"★".repeat(Math.round(attraction.rating || 0))}</span>
           <span style="color: #ccc;">${"★".repeat(5 - Math.round(attraction.rating || 0))}</span>
-          <span style="margin-left: 5px; color: #666; font-size: 14px;">${attraction.rating || 'Not rated'}</span>
+          <span style="margin-left: 5px; color: #4a5568; font-size: 14px;">${attraction.rating || 'Not rated'}</span>
         </div>
     `;
     
     // Add address if available
     if (attraction.vicinity) {
-      popupHtml += `<div style="margin-bottom: 5px; font-size: 14px;">${attraction.vicinity}</div>`;
+      popupHtml += `<div style="margin-bottom: 5px; font-size: 14px; color: #2d3748;">${attraction.vicinity}</div>`;
     }
     
     // Add price level if available (Google data)
     if (attraction.priceLevel !== undefined) {
       const priceText = "$".repeat(attraction.priceLevel);
-      popupHtml += `<div style="margin-bottom: 5px; color: #666;">Price: ${priceText || 'N/A'}</div>`;
+      popupHtml += `<div style="margin-bottom: 5px; color: #4a5568;">Price: ${priceText || 'N/A'}</div>`;
     }
     
     // Add a photo if available
     if (attraction.photos && attraction.photos.length > 0) {
-      popupHtml += `<img src="${attraction.photos[0]}" style="width: 100%; height: 100px; object-fit: cover; margin-bottom: 5px; border-radius: 4px;" />`;
+      const photoObj = attraction.photos[0];
+      const photoUrl = typeof photoObj === 'string' ? photoObj : photoObj.getUrl ? photoObj.getUrl() : null;
+      
+      console.log('Photo URL for popup:', {
+        location: attraction.name,
+        photoUrl,
+        photoType: typeof photoUrl,
+        hasValue: Boolean(photoUrl)
+      });
+      
+      if (photoUrl) {
+        popupHtml += `
+          <div style="width: 100%; height: 120px; margin-bottom: 5px; position: relative; overflow: hidden; border-radius: 4px; background-color: #f0f0f0;">
+            <img 
+              src="${photoUrl}" 
+              style="width: 100%; height: 100%; object-fit: cover;" 
+              onload="this.style.opacity='1'; this.parentNode.querySelector('.loader-overlay').style.display='none';" 
+              onerror="this.onerror=null; this.parentNode.innerHTML='<div style=\\'padding: 10px; text-align: center; color: #4a5568;\\'>Image unavailable</div>';" 
+              loading="lazy"
+            />
+            <div class="loader-overlay" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; background-color: rgba(0,0,0,0.1);">
+              <span style="display: inline-block; width: 20px; height: 20px; border: 2px solid #4299e1; border-radius: 50%; border-top-color: transparent; animation: spin 1s linear infinite;"></span>
+            </div>
+          </div>
+          <style>
+            @keyframes spin {
+              0% { transform: rotate(0deg); }
+              100% { transform: rotate(360deg); }
+            }
+          </style>
+        `;
+      }
     }
     
     // Add button
     popupHtml += `
-        <button class="add-to-itinerary" style="width: 100%; background-color: #4299e1; color: white; border: none; padding: 8px; border-radius: 4px; cursor: pointer; margin-top: 5px;">Add to Day ${selectedDay + 1}</button>
+        <button class="add-to-itinerary" style="width: 100%; background-color: #4299e1; color: white; border: none; padding: 8px; border-radius: 4px; cursor: pointer; margin-top: 5px; font-weight: 600;">Add to Day ${selectedDay + 1}</button>
       </div>
     `;
     
@@ -1725,6 +1762,12 @@ export default function MapsView({ tripDetails, onAddEvent }) {
           });
         }
       }, 0);
+    });
+    
+    console.log('Created marker with popup for:', {
+      name: attraction.name,
+      hasPhotos: attraction.photos && attraction.photos.length > 0,
+      photosArray: attraction.photos
     });
     
     return marker;
@@ -1844,19 +1887,43 @@ export default function MapsView({ tripDetails, onAddEvent }) {
             if (status === window.google.maps.places.PlacesServiceStatus.OK && results && results.length > 0) {
               try {
                 // Process and format the results
-                const places = results.map(place => ({
-                  id: place.place_id,
-                  name: place.name,
-                  type: determineLocationType(place.types[0] || 'activity'),
-                  coordinates: { 
-                    lat: place.geometry.location.lat(), 
-                    lng: place.geometry.location.lng() 
-                  },
-                  rating: place.rating,
-                  photos: place.photos ? place.photos.map(p => p.getUrl()) : [],
-                  vicinity: place.vicinity,
-                  priceLevel: place.price_level
-                }));
+                const places = results.map(place => {
+                  let photoUrls = [];
+                  
+                  // Safely extract photo URLs
+                  if (place.photos && place.photos.length > 0) {
+                    photoUrls = place.photos.map(photo => {
+                      try {
+                        // First try using the getUrl method from the API
+                        if (typeof photo.getUrl === 'function') {
+                          return photo.getUrl({ maxWidth: 400, maxHeight: 300 });
+                        } 
+                        // Fall back to photo_reference if available
+                        else if (photo.photo_reference) {
+                          return `https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photo_reference=${photo.photo_reference}&key=${GOOGLE_MAPS_API_KEY}`;
+                        }
+                        return null;
+                      } catch (err) {
+                        console.error('Error getting photo URL:', err);
+                        return null;
+                      }
+                    }).filter(url => url !== null);
+                  }
+                  
+                  return {
+                    id: place.place_id,
+                    name: place.name,
+                    type: determineLocationType(place.types[0] || 'activity'),
+                    coordinates: { 
+                      lat: place.geometry.location.lat(), 
+                      lng: place.geometry.location.lng() 
+                    },
+                    rating: place.rating,
+                    photos: photoUrls,
+                    vicinity: place.vicinity,
+                    priceLevel: place.price_level
+                  };
+                });
                 
                 // Cache the results
                 apiCache.set('places', cacheKey, places);
@@ -1939,7 +2006,10 @@ export default function MapsView({ tripDetails, onAddEvent }) {
           
           // Get nearby places using our API service
           const nearbyPlaces = await getNearbyPlaces(currentCenter, 1500, 'tourist_attraction');
-          console.log('Nearby places:', nearbyPlaces);
+          console.log('Nearby places with photos:', nearbyPlaces.map(place => ({
+            name: place.name,
+            photos: place.photos
+          })));
           
           // Update state with the new attractions
           setNearbyAttractions(nearbyPlaces);
@@ -2288,6 +2358,310 @@ export default function MapsView({ tripDetails, onAddEvent }) {
     };
   }, [useFixedContainer]);
 
+  // Helper function to format duration (seconds to readable string)
+  const formatDuration = (seconds) => {
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    let str = '';
+    if (hours > 0) str += `${hours}h `;
+    if (minutes > 0) str += `${minutes}m`;
+    if (str === '') str = '< 1m'; // For very short durations
+    return str.trim();
+  };
+
+  const clearRoutingVisuals = useCallback(() => {
+    // Remove routing point markers
+    routingPointMarkers.forEach(marker => marker.remove());
+    setRoutingPointMarkers([]);
+
+    // Clear multi-stop route from map
+    if (map.current && map.current.getSource('multiStopRoute')) {
+      map.current.getSource('multiStopRoute').setData({
+        type: 'FeatureCollection',
+        features: []
+      });
+    }
+  }, [map, routingPointMarkers]);
+
+  const toggleRoutingMode = useCallback(() => {
+    setIsRoutingMode(prev => {
+      const newMode = !prev;
+      if (!newMode) { // Exiting routing mode
+        // Optionally clear points or keep them for calculation
+        // For now, let's keep them if some are selected, user can explicitly clear
+      }
+      return newMode;
+    });
+  }, []);
+
+  const clearRoutingData = useCallback(() => {
+    setRoutingPoints([]);
+    setMultiStopRouteDetails(null);
+    clearRoutingVisuals();
+  }, [clearRoutingVisuals]);
+
+  const calculateAndDrawMultiStopRoute = useCallback(async () => {
+    if (!map.current || routingPoints.length < 2) return;
+    
+    try {
+      // Show loading indicator
+      const loadingEl = document.createElement('div');
+      loadingEl.className = 'loading-indicator';
+      loadingEl.textContent = 'Calculating route...';
+      loadingEl.style.position = 'absolute';
+      loadingEl.style.top = '50%';
+      loadingEl.style.left = '50%';
+      loadingEl.style.transform = 'translate(-50%, -50%)';
+      loadingEl.style.backgroundColor = 'rgba(0,0,0,0.7)';
+      loadingEl.style.color = 'white';
+      loadingEl.style.padding = '10px 15px';
+      loadingEl.style.borderRadius = '4px';
+      loadingEl.style.zIndex = '999';
+      
+      if (mapContainer.current) {
+        mapContainer.current.appendChild(loadingEl);
+      }
+      
+      // Prepare coordinates string for the API
+      const coordinatesString = routingPoints
+        .map(point => `${point.lng},${point.lat}`)
+        .join(';');
+      
+      // Call Mapbox Directions API
+      const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${coordinatesString}?geometries=geojson&steps=true&access_token=${MAPBOX_TOKEN}`;
+      
+      const response = await axios.get(url);
+      
+      // Remove loading indicator
+      if (loadingEl && loadingEl.parentNode) {
+        loadingEl.parentNode.removeChild(loadingEl);
+      }
+      
+      if (response.data.routes && response.data.routes.length > 0) {
+        const route = response.data.routes[0];
+        
+        // Store route details
+        setMultiStopRouteDetails({
+          path: route.geometry.coordinates,
+          distance: route.distance, // in meters
+          duration: route.duration // in seconds
+        });
+        
+        // Prepare to draw route on map
+        // First, check if source already exists
+        if (!map.current.getSource('multiStopRoute')) {
+          // Add source and layer if they don't exist
+          map.current.addSource('multiStopRoute', {
+            type: 'geojson',
+            data: {
+              type: 'Feature',
+              properties: {},
+              geometry: {
+                type: 'LineString',
+                coordinates: route.geometry.coordinates
+              }
+            }
+          });
+          
+          map.current.addLayer({
+            id: 'multiStopRoute',
+            type: 'line',
+            source: 'multiStopRoute',
+            layout: {
+              'line-join': 'round',
+              'line-cap': 'round'
+            },
+            paint: {
+              'line-color': '#3887be',
+              'line-width': 5,
+              'line-opacity': 0.75
+            }
+          });
+        } else {
+          // Update existing source
+          map.current.getSource('multiStopRoute').setData({
+            type: 'Feature',
+            properties: {},
+            geometry: {
+              type: 'LineString',
+              coordinates: route.geometry.coordinates
+            }
+          });
+        }
+        
+        // Fit map to the route
+        const bounds = new mapboxgl.LngLatBounds();
+        route.geometry.coordinates.forEach(coord => {
+          bounds.extend(coord);
+        });
+        
+        map.current.fitBounds(bounds, {
+          padding: 50,
+          maxZoom: 15
+        });
+        
+        // Exit routing mode but keep the points and route
+        setIsRoutingMode(false);
+        
+      } else {
+        // Handle no routes found
+        alert('No route found between the selected points. Please try different locations.');
+      }
+    } catch (error) {
+      console.error('Error calculating route:', error);
+      alert('Error calculating route. Please try again.');
+      
+      // Remove loading indicator if it exists
+      const loadingEl = document.querySelector('.loading-indicator');
+      if (loadingEl && loadingEl.parentNode) {
+        loadingEl.parentNode.removeChild(loadingEl);
+      }
+    }
+  }, [map, mapContainer, routingPoints, MAPBOX_TOKEN]);
+
+  const handleMapClickForRouting = useCallback((e) => {
+    if (!map.current || !isRoutingMode) return;
+
+    const coords = e.lngLat;
+    setRoutingPoints(prev => [...prev, { lng: coords.lng, lat: coords.lat }]);
+
+    // Add a simple visual marker for the routing point
+    const markerEl = document.createElement('div');
+    markerEl.style.backgroundColor = 'rgba(255, 0, 0, 0.7)';
+    markerEl.style.border = '2px solid rgba(255, 255, 255, 0.8)';
+    markerEl.style.width = '12px';
+    markerEl.style.height = '12px';
+    markerEl.style.borderRadius = '50%';
+    markerEl.style.cursor = 'pointer';
+    markerEl.title = `Routing Point ${routingPoints.length + 1}`;
+
+    const pointMarker = new mapboxgl.Marker(markerEl)
+      .setLngLat(coords)
+      .addTo(map.current);
+    
+    setRoutingPointMarkers(prev => [...prev, pointMarker]);
+  }, [map, isRoutingMode, routingPoints.length]);
+
+  // Add click handler to map when it's loaded
+  useEffect(() => {
+    if (map.current && !isLoading && mapInitialized) { // ensure mapInitialized
+      const handleClick = (e) => {
+        if (isRoutingMode) {
+          handleMapClickForRouting(e);
+        } else if (e.originalEvent.shiftKey) {
+          addCustomMarker(e);
+        }
+      };
+
+      map.current.on('click', handleClick);
+      
+      // Help message for adding markers (adjust if routing mode is active)
+      const helpMsgElement = mapContainer.current?.querySelector('.help-message');
+      if (helpMsgElement) {
+        helpMsgElement.textContent = isRoutingMode 
+          ? `Click to add route point (${routingPoints.length} selected). ${routingPoints.length >=2 ? 'Ready to calculate.' : ''}` 
+          : 'Shift+Click on map to add a new location to itinerary.';
+      }
+
+      return () => {
+        if (map.current && map.current.off) { // Check if map.current.off exists
+          map.current.off('click', handleClick);
+        }
+      };
+    }
+  }, [map.current, isLoading, mapInitialized, addCustomMarker, isRoutingMode, handleMapClickForRouting, routingPoints.length]);
+
+  // Update help message when routingPoints.length changes while in routing mode
+  useEffect(() => {
+    if (isRoutingMode && mapContainer.current) {
+      const helpMsgElement = mapContainer.current.querySelector('.help-message');
+      if (helpMsgElement) {
+        helpMsgElement.textContent = `Click to add route point (${routingPoints.length} selected). ${routingPoints.length >=2 ? 'Ready to calculate.' : ''}`;
+      }
+    }
+  }, [isRoutingMode, routingPoints.length, mapContainer.current]);
+
+  // Check DOM for container element with persistent polling
+  useEffect(() => {
+    // Keep track of total elapsed time
+    let totalElapsedTime = 0;
+    const maxWaitTime = 10000; // 10 seconds max wait time
+    const pollInterval = 200; // Poll every 200ms
+    let observer = null;
+    
+    // Don't try to initialize if map is already initialized
+    if (map.current || mapInitialized) return;
+    
+    console.log('Starting persistent container polling');
+    
+    // Set up MutationObserver for dynamic changes
+    observer = new MutationObserver((mutations) => {
+      const container = document.getElementById('mapbox-container');
+      if (container && !map.current && !mapInitialized) {
+        console.log('MutationObserver found container:', container);
+        mapContainer.current = container;
+        setContainerReady(true);
+        initializeMapDirectly(container);
+        observer.disconnect();
+      }
+    });
+    
+    // Start observing the document body
+    observer.observe(document.body, { 
+      childList: true, 
+      subtree: true 
+    });
+    
+    // Define a polling function to keep checking for the container
+    const pollForContainer = () => {
+      if (map.current || mapInitialized) {
+        console.log('Map already initialized, stopping polling');
+        return;
+      }
+      
+      if (totalElapsedTime >= maxWaitTime) {
+        console.log('Reached maximum wait time for container, giving up');
+        setIsLoading(false);
+        return;
+      }
+      
+      // Try finding the container in various ways
+      const container = 
+        mapContainer.current || 
+        document.getElementById('mapbox-container') || 
+        document.querySelector('[data-testid="map-container"]');
+      
+      if (container) {
+        console.log('Found container through polling after', totalElapsedTime, 'ms:', container);
+        mapContainer.current = container;
+        setContainerReady(true);
+        initializeMapDirectly(container);
+        return; // Stop polling if we found the container
+      }
+      
+      // If the container isn't found, let's add even more logging
+      console.log('Container polling attempt at', totalElapsedTime, 'ms - container not found');
+      console.log('Container ref status:', !!mapContainer.current);
+      
+      // Check all elements with IDs
+      console.log('All elements with IDs:', 
+        Array.from(document.querySelectorAll('[id]'))
+          .map(el => ({ id: el.id, tagName: el.tagName }))
+      );
+      
+      // Wait and try again
+      totalElapsedTime += pollInterval;
+      setTimeout(pollForContainer, pollInterval);
+    };
+    
+    // Start polling
+    pollForContainer();
+    
+    return () => {
+      if (observer) observer.disconnect();
+    };
+  }, [mapInitialized, initializeMapDirectly]);
+
   return (
     <div className="h-full w-full flex flex-col bg-white">
       <style>
@@ -2332,6 +2706,38 @@ export default function MapsView({ tripDetails, onAddEvent }) {
             min-width: 500px;
             background-color: #e9eef2;
           }
+          
+          /* Improved text styling for better visibility */
+          .font-semibold {
+            font-weight: 600;
+            color: #1a202c;
+          }
+          
+          label {
+            color: #2d3748;
+          }
+          
+          .text-gray-800 {
+            color: #1a202c;
+          }
+          
+          .text-gray-600 {
+            color: #4a5568;
+          }
+          
+          .text-gray-500 {
+            color: #718096;
+          }
+          
+          .text-blue-100 {
+            color: #ebf8ff;
+          }
+          
+          .help-message {
+            color: #f7fafc !important;
+            font-weight: 500 !important;
+            text-shadow: 0px 1px 2px rgba(0,0,0,0.3) !important;
+          }
         `}
       </style>
       
@@ -2347,7 +2753,7 @@ export default function MapsView({ tripDetails, onAddEvent }) {
           <div className="h-full flex items-center justify-center">
             <div className="flex flex-col items-center">
               <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
-              <p className="mt-2 text-gray-600">Loading map...</p>
+              <p className="mt-2 text-gray-600" style={{color: "#4a5568", fontWeight: 500}}>Loading map...</p>
             </div>
           </div>
         ) : (
@@ -2356,7 +2762,7 @@ export default function MapsView({ tripDetails, onAddEvent }) {
             <div className="w-full md:w-64 space-y-4">
               {/* Day selector */}
               <div className="bg-white rounded-lg p-4 shadow-sm">
-                <h3 className="font-semibold text-gray-800 mb-2">Select Day</h3>
+                <h3 className="font-semibold text-gray-800 mb-2" style={{color: "#1a202c"}}>Select Day</h3>
                 <div className="flex flex-wrap gap-2">
                   {Array.from({ length: tripDetails?.numberOfDays || 3 }).map((_, index) => (
                     <button
@@ -2366,6 +2772,7 @@ export default function MapsView({ tripDetails, onAddEvent }) {
                           ? 'bg-blue-600 text-white' 
                           : 'bg-gray-100 text-gray-800 hover:bg-gray-200'
                       }`}
+                      style={selectedDay !== index ? {color: "#1a202c"} : {}}
                       onClick={() => handleDayChange(index)}
                     >
                       Day {index + 1}
@@ -2376,9 +2783,9 @@ export default function MapsView({ tripDetails, onAddEvent }) {
               
               {/* Layer toggles */}
               <div className="bg-white rounded-lg p-4 shadow-sm">
-                <h3 className="font-semibold text-gray-800 mb-2">Map Layers</h3>
+                <h3 className="font-semibold text-gray-800 mb-2" style={{color: "#1a202c"}}>Map Layers</h3>
                 <div className="space-y-2">
-                  <label className="flex items-center space-x-2 cursor-pointer">
+                  <label className="flex items-center space-x-2 cursor-pointer" style={{color: "#2d3748"}}>
                     <input 
                       type="checkbox" 
                       checked={activeLayers.hotels} 
@@ -2389,7 +2796,7 @@ export default function MapsView({ tripDetails, onAddEvent }) {
                     <span className="ml-auto w-3 h-3 rounded-full" style={{ backgroundColor: markerTypes.hotel.color }}></span>
                   </label>
                   
-                  <label className="flex items-center space-x-2 cursor-pointer">
+                  <label className="flex items-center space-x-2 cursor-pointer" style={{color: "#2d3748"}}>
                     <input 
                       type="checkbox" 
                       checked={activeLayers.restaurants} 
@@ -2400,7 +2807,7 @@ export default function MapsView({ tripDetails, onAddEvent }) {
                     <span className="ml-auto w-3 h-3 rounded-full" style={{ backgroundColor: markerTypes.restaurant.color }}></span>
                   </label>
                   
-                  <label className="flex items-center space-x-2 cursor-pointer">
+                  <label className="flex items-center space-x-2 cursor-pointer" style={{color: "#2d3748"}}>
                     <input 
                       type="checkbox" 
                       checked={activeLayers.activities} 
@@ -2411,7 +2818,7 @@ export default function MapsView({ tripDetails, onAddEvent }) {
                     <span className="ml-auto w-3 h-3 rounded-full" style={{ backgroundColor: markerTypes.activity.color }}></span>
                   </label>
                   
-                  <label className="flex items-center space-x-2 cursor-pointer">
+                  <label className="flex items-center space-x-2 cursor-pointer" style={{color: "#2d3748"}}>
                     <input 
                       type="checkbox" 
                       checked={activeLayers.transport} 
@@ -2432,16 +2839,53 @@ export default function MapsView({ tripDetails, onAddEvent }) {
                     ? 'bg-blue-700 text-white' 
                     : 'bg-blue-600 hover:bg-blue-700 text-white'
                 }`}
+                style={{fontWeight: 600}}
               >
                 {showSuggestionsPanel ? 'Hide Suggestions' : 'Suggest Nearby'}
               </button>
               
+              {/* Multi-stop Routing Controls */}
+              <div className="bg-white rounded-lg p-4 shadow-sm space-y-3">
+                <h3 className="font-semibold text-gray-800 mb-1" style={{color: "#1a202c"}}>Multi-Stop Route</h3>
+                <button
+                  onClick={toggleRoutingMode} // Will define this function next
+                  className={`w-full py-2 px-4 rounded text-white font-medium ${
+                    isRoutingMode ? 'bg-red-500 hover:bg-red-600' : 'bg-green-500 hover:bg-green-600'
+                  }`}
+                >
+                  {isRoutingMode ? `Stop Selecting Points (${routingPoints.length} selected)` : 'Select Route Points'}
+                </button>
+                {routingPoints.length >= 2 && (
+                  <button
+                    onClick={calculateAndDrawMultiStopRoute} // Will define this function
+                    className="w-full py-2 px-4 rounded bg-blue-600 hover:bg-blue-700 text-white font-medium"
+                  >
+                    Calculate Route
+                  </button>
+                )}
+                {routingPoints.length > 0 && (
+                  <button
+                    onClick={clearRoutingData} // Will define this function
+                    className="w-full py-2 px-4 rounded bg-gray-500 hover:bg-gray-600 text-white font-medium"
+                  >
+                    Clear Selected Points
+                  </button>
+                )}
+                {multiStopRouteDetails && (
+                  <div className="mt-3 pt-3 border-t border-gray-200 text-sm">
+                    <p className="font-medium text-gray-700">Route Calculated:</p>
+                    <p className="text-gray-600">Total Distance: {(multiStopRouteDetails.distance / 1000).toFixed(2)} km</p>
+                    <p className="text-gray-600">Total Duration: {formatDuration(multiStopRouteDetails.duration)}</p> {/* Will define formatDuration */}
+                  </div>
+                )}
+              </div>
+              
               {/* Transportation options */}
               <div className="bg-white rounded-lg p-4 shadow-sm">
-                <h3 className="font-semibold text-gray-800 mb-2">Transportation</h3>
+                <h3 className="font-semibold text-gray-800 mb-2" style={{color: "#1a202c"}}>Transportation</h3>
                 <div className="space-y-2">
                   {Object.entries(transportColors).map(([type, color]) => (
-                    <div key={type} className="flex items-center">
+                    <div key={type} className="flex items-center" style={{color: "#2d3748"}}>
                       <span className="capitalize">{type}</span>
                       <span className="ml-auto w-8 h-2 rounded" style={{ backgroundColor: color }}></span>
                     </div>
@@ -2502,69 +2946,6 @@ export default function MapsView({ tripDetails, onAddEvent }) {
             )}
           </div>
         )}
-      </div>
-      
-      {/* Debug panel with container dimensions and toggle option */}
-      <div className="fixed bottom-0 right-0 bg-white p-3 shadow-lg border border-gray-300 rounded-tl-lg text-xs z-50">
-        <div><strong>Map Status:</strong> {mapInitialized ? '✅ Initialized' : '❌ Not Ready'}</div>
-        <div><strong>Container:</strong> {containerReady ? '✅ Ready' : '❌ Missing'}</div>
-        <div><strong>Container Mode:</strong> {useFixedContainer ? 'Fixed Position' : 'Embedded'}</div>
-        <div><strong>Container ID:</strong> {mapContainer.current ? mapContainer.current.id : 'none'}</div>
-        <div><strong>Container Size:</strong> {mapContainer.current ? 
-          `${mapContainer.current.offsetWidth}x${mapContainer.current.offsetHeight}` : 'unknown'}</div>
-        <div><strong>Mapbox Token:</strong> {MAPBOX_TOKEN ? '✅ Present' : '❌ Missing'}</div>
-        <div className="flex flex-wrap gap-2 mt-2">
-          <button 
-            onClick={() => {
-              if (map.current) {
-                try {
-                  map.current.resize();
-                  console.log('Manual map resize triggered');
-                } catch (e) {
-                  console.error('Error resizing map:', e);
-                }
-              } else {
-                console.error('Map not initialized yet');
-              }
-            }}
-            className="px-2 py-1 bg-blue-500 text-white rounded hover:bg-blue-600"
-          >
-            Resize
-          </button>
-          <button 
-            onClick={() => {
-              // For fixed container, always use the fixed container
-              const container = useFixedContainer ? 
-                document.getElementById(fixedContainerId) :
-                document.getElementById('mapbox-container');
-                
-              if (container) {
-                console.log('Found container via button click:', container);
-                mapContainer.current = container;
-                setContainerReady(true);
-                
-                // Force clean dimensions
-                container.style.width = '800px';
-                container.style.height = '600px';
-                
-                // Initialize
-                initializeMapDirectly(container);
-              } else {
-                console.error('Could not find container');
-                alert('Container not found. Try refreshing the page.');
-              }
-            }}
-            className="px-2 py-1 bg-purple-500 text-white rounded hover:bg-purple-600"
-          >
-            Init Direct
-          </button>
-          <button 
-            onClick={toggleMapContainer}
-            className="px-2 py-1 bg-orange-500 text-white rounded hover:bg-orange-600"
-          >
-            Toggle Mode
-          </button>
-        </div>
       </div>
     </div>
   );
