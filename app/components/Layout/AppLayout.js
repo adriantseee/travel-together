@@ -4,7 +4,7 @@ import { useState, useCallback, useRef } from 'react';
 import Sidebar from '../Sidebar/Sidebar';
 import DnDCalendar from '../Calendar/DnDCalendar';
 import MapsView from '../Maps/MapsView';
-import AssistantView from '../Assistant/AssistantView';
+import FloatingChatButton from '../FloatingChatButton';
 
 export default function AppLayout({ initialData, currentUser, onShareStatusChange, onShareWithUsers }) {
   const [activeScreen, setActiveScreen] = useState('itinerary');
@@ -40,8 +40,6 @@ export default function AppLayout({ initialData, currentUser, onShareStatusChang
           tripDetails={initialData} 
           onAddEvent={handleAddEventFromMap} 
         />;
-      case 'assistant':
-        return <AssistantView tripDetails={initialData} />;
       case 'itinerary':
       default:
         return (
@@ -62,6 +60,7 @@ export default function AppLayout({ initialData, currentUser, onShareStatusChang
       <div className="flex-1 overflow-hidden">
         {renderActiveScreen()}
       </div>
+      <FloatingChatButton />
     </div>
   );
 } 
