@@ -5,6 +5,30 @@ import DraggableEvent from './DraggableEvent';
 import ShareModal from './ShareModal';
 import { getUserColor } from './utils';
 import { supabase } from '../../lib/supabase';
+// Add import for Leaflet (OpenStreetMap)
+import 'leaflet/dist/leaflet.css';
+import dynamic from 'next/dynamic';
+
+// Dynamically import Leaflet components with no SSR
+const MapContainer = dynamic(
+  () => import('react-leaflet').then((mod) => mod.MapContainer),
+  { ssr: false }
+);
+const TileLayer = dynamic(
+  () => import('react-leaflet').then((mod) => mod.TileLayer),
+  { ssr: false }
+);
+const Marker = dynamic(
+  () => import('react-leaflet').then((mod) => mod.Marker),
+  { ssr: false }
+);
+const useMapEvents = dynamic(
+  () => import('react-leaflet').then((mod) => mod.useMapEvents),
+  { ssr: false }
+);
+
+// Define pin icon outside component to avoid recreation
+let pinIcon = null;
 
 const DnDCalendar = forwardRef(({ initialData, currentUser, onShareStatusChange, onShareWithUsers }, ref) => {
   const [currentDayIndex, setCurrentDayIndex] = useState(0);
@@ -22,7 +46,9 @@ const DnDCalendar = forwardRef(({ initialData, currentUser, onShareStatusChange,
   const [newEventData, setNewEventData] = useState({
     activity: '',
     time: '09:00',
-    duration: 60
+    duration: 60,
+    location: '',
+    coordinates: null // To store latitude and longitude
   });
   const [tripDetails, setTripDetails] = useState({
     name: 'Summer Getaway',
@@ -46,6 +72,8 @@ const DnDCalendar = forwardRef(({ initialData, currentUser, onShareStatusChange,
   const [pendingApprovals, setPendingApprovals] = useState([]);
   // Add state for notification
   const [notification, setNotification] = useState(null);
+  const mapRef = useRef(null);
+  const [isPinMode, setIsPinMode] = useState(false);
 
   // Initialize trip details and user from props if available
   useEffect(() => {
@@ -1452,12 +1480,14 @@ const DnDCalendar = forwardRef(({ initialData, currentUser, onShareStatusChange,
     
     const endTime = `${String(endHours).padStart(2, '0')}:${String(endMinutes).padStart(2, '0')}`;
     
-    // Create the new event object
+    // Create the new event object with location data
     const newEvent = {
       id: newEventId,
       activity: newEventData.activity,
       time: newEventData.time,
       endTime: endTime,
+      location: newEventData.location || '',
+      coordinates: newEventData.coordinates || null,
       createdBy: {
         id: user.id,
         name: user.name,
@@ -1498,7 +1528,7 @@ const DnDCalendar = forwardRef(({ initialData, currentUser, onShareStatusChange,
         return newDays;
       });
       
-      // Save to user_edits table
+      // Save to user_edits table with location data
       try {
         const { error } = await supabase
           .from('user_edits')
@@ -1510,6 +1540,8 @@ const DnDCalendar = forwardRef(({ initialData, currentUser, onShareStatusChange,
             activity: newEventData.activity,
             time: newEventData.time,
             end_time: endTime,
+            location: newEventData.location || '',
+            coordinates: newEventData.coordinates ? JSON.stringify(newEventData.coordinates) : null,
             created_by_user_id: user.id,
             created_by_name: user.name,
             created_by_avatar: user.avatar,
@@ -1550,7 +1582,7 @@ const DnDCalendar = forwardRef(({ initialData, currentUser, onShareStatusChange,
         return newDays;
       });
       
-      // Save to trip_events table
+      // Save to trip_events table with location data
       try {
         const { error } = await supabase
           .from('trip_events')
@@ -1561,6 +1593,8 @@ const DnDCalendar = forwardRef(({ initialData, currentUser, onShareStatusChange,
             activity: newEventData.activity,
             time: newEventData.time,
             end_time: endTime,
+            location: newEventData.location || '',
+            coordinates: newEventData.coordinates ? JSON.stringify(newEventData.coordinates) : null,
             created_by_user_id: user.id,
             created_by_name: user.name,
             created_by_avatar: user.avatar,
@@ -1587,7 +1621,9 @@ const DnDCalendar = forwardRef(({ initialData, currentUser, onShareStatusChange,
     setNewEventData({
       activity: '',
       time: '09:00',
-      duration: 60
+      duration: 60,
+      location: '',
+      coordinates: null
     });
     
     // Close the modal
@@ -2095,7 +2131,9 @@ const DnDCalendar = forwardRef(({ initialData, currentUser, onShareStatusChange,
       const newEvent = {
         activity: eventData.activity || 'New Event',
         time: eventData.time || '12:00',
-        duration: eventData.duration || 60
+        duration: eventData.duration || 60,
+        location: eventData.location || '',
+        coordinates: eventData.coordinates || null
       };
       
       // Set the event data and open the add event modal
@@ -2103,6 +2141,127 @@ const DnDCalendar = forwardRef(({ initialData, currentUser, onShareStatusChange,
       setIsAddEventModalOpen(true);
     }
   }));
+
+  // Map marker component
+  const LocationMarker = () => {
+    const map = useMapEvents({
+      // Now we're only using this for map initialization
+      load: () => {
+        // Just to keep the map reference up to date
+        if (map) {
+          mapRef.current = map;
+        }
+      }
+    });
+    
+    // Only show the actual marker when coordinates are selected
+    return newEventData.coordinates ? (
+      <Marker 
+        position={[newEventData.coordinates.lat, newEventData.coordinates.lng]}
+      />
+    ) : null;
+  };
+
+  // Place pin at center of current map view
+  const placePinAtCenter = () => {
+    if (!mapRef.current) return;
+    
+    // Get the center coordinates of the current map view
+    const center = mapRef.current.getCenter();
+    const lat = center.lat;
+    const lng = center.lng;
+    
+    // Visual feedback
+    const notification = document.createElement('div');
+    notification.className = 'map-notification';
+    notification.textContent = 'Placing pin at center of map...';
+    notification.style.cssText = `
+      position: absolute;
+      bottom: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      background-color: rgba(59, 130, 246, 0.9);
+      color: white;
+      padding: 8px 16px;
+      border-radius: 4px;
+      font-size: 12px;
+      z-index: 1000;
+      pointer-events: none;
+    `;
+    mapRef.current.getContainer().appendChild(notification);
+    
+    // Update state with coordinates
+    setNewEventData(prev => ({
+      ...prev,
+      coordinates: { lat, lng }
+    }));
+    
+    // Get address from coordinates using reverse geocoding
+    fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&accept-language=en&addressdetails=1`)
+      .then(response => response.json())
+      .then(data => {
+        if (data.display_name) {
+          setNewEventData(prev => ({
+            ...prev,
+            location: data.display_name
+          }));
+          
+          // Update notification with success message
+          notification.textContent = 'Address found!';
+          notification.style.backgroundColor = 'rgba(16, 185, 129, 0.9)'; // Green for success
+        }
+      })
+      .catch(err => {
+        console.error('Error fetching location name:', err);
+        // Update notification with error message
+        notification.textContent = 'Could not fetch address. Try again.';
+        notification.style.backgroundColor = 'rgba(239, 68, 68, 0.9)'; // Red for error
+      })
+      .finally(() => {
+        // Remove notification after delay
+        setTimeout(() => {
+          if (notification.parentNode) {
+            notification.parentNode.removeChild(notification);
+          }
+        }, 3000);
+      });
+  };
+
+  // Toggle pin drop mode
+  const togglePinMode = () => {
+    setIsPinMode(!isPinMode);
+  };
+
+  // Add search functionality for locations
+  const handleLocationSearch = (e) => {
+    e.preventDefault();
+    const searchTerm = newEventData.location;
+    
+    if (!searchTerm) return;
+    
+    // Add explicit language parameter to ensure English results
+    fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(searchTerm)}&accept-language=en&addressdetails=1`)
+      .then(response => response.json())
+      .then(data => {
+        if (data && data.length > 0) {
+          const { lat, lon } = data[0];
+          setNewEventData(prev => ({
+            ...prev,
+            coordinates: {
+              lat: parseFloat(lat),
+              lng: parseFloat(lon)
+            },
+            location: data[0].display_name
+          }));
+          
+          // Center map on the found location
+          if (mapRef.current) {
+            mapRef.current.setView([parseFloat(lat), parseFloat(lon)], 13);
+          }
+        }
+      })
+      .catch(err => console.error('Error searching location:', err));
+  };
 
   return (
     <div className="h-screen w-full bg-white flex flex-col overflow-hidden">
@@ -2350,15 +2509,17 @@ const DnDCalendar = forwardRef(({ initialData, currentUser, onShareStatusChange,
                   </>
                 )}
                 
-                <button 
-                  onClick={() => setIsAddEventModalOpen(true)}
-                  className="flex items-center px-3 py-1.5 bg-blue-500 hover:bg-blue-600 text-white rounded-md transition-colors text-sm"
-                >
-                  <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-                  </svg>
-                  Add Event
-                </button>
+                {/* Remove the Add Event button - now this will be done from the map */}
+              </div>
+            </div>
+            
+            {/* Add instructions banner for how to add events */}
+            <div className="mt-3 bg-blue-50 border border-blue-200 rounded-md p-3 flex items-center text-blue-800">
+              <svg className="w-5 h-5 mr-2 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <div>
+                <span className="font-medium">New:</span> To add events to your itinerary, go to the <span className="font-semibold">Maps</span> tab and search for locations. You can search for specific places, restaurants, hotels, and attractions.
               </div>
             </div>
           </div>
@@ -2479,15 +2640,10 @@ const DnDCalendar = forwardRef(({ initialData, currentUser, onShareStatusChange,
                           ));
                         })()}
                         
-                        {/* Add button */}
-                        <button
-                          onClick={() => setIsAddEventModalOpen(true)}
-                          className="absolute bottom-4 right-4 bg-blue-500 hover:bg-blue-600 text-white rounded-full w-10 h-10 flex items-center justify-center shadow-md"
-                        >
-                          <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-                          </svg>
-                        </button>
+                        {/* Instructions instead of Add button */}
+                        <div className="absolute bottom-4 right-4 bg-blue-50 border border-blue-200 text-blue-800 p-3 rounded-md shadow-sm max-w-xs">
+                          <p className="text-sm font-medium">Use the Map view to search for locations and add them to your calendar.</p>
+                        </div>
                       </div>
                     ) : (
                       // Normal mode - single calendar view - use normal days array
@@ -2531,7 +2687,7 @@ const DnDCalendar = forwardRef(({ initialData, currentUser, onShareStatusChange,
       {/* Add Event Modal */}
       {isAddEventModalOpen && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-96 shadow-xl">
+          <div className="bg-white rounded-lg p-6 w-[600px] max-h-[90vh] overflow-y-auto shadow-xl">
             <h2 className="text-xl font-semibold mb-4 text-gray-900">Add New Event</h2>
             
             <div className="space-y-4">
@@ -2577,6 +2733,104 @@ const DnDCalendar = forwardRef(({ initialData, currentUser, onShareStatusChange,
                   <option value={120}>2 hours</option>
                   <option value={180}>3 hours</option>
                 </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Location
+                </label>
+                <div className="flex gap-2 mb-2">
+                  <input
+                    type="text"
+                    value={newEventData.location}
+                    onChange={(e) => setNewEventData(prev => ({ ...prev, location: e.target.value }))}
+                    className="flex-1 px-3 py-2 border border-gray-400 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 text-gray-900 font-medium"
+                    placeholder="Search for a location or click on the map"
+                  />
+                  <button
+                    onClick={handleLocationSearch}
+                    className="px-3 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600"
+                  >
+                    Search
+                  </button>
+                </div>
+                <div className="h-48 w-full border border-gray-300 rounded-md overflow-hidden relative">
+                  {typeof window !== 'undefined' && (
+                    <MapContainer
+                      center={[40.7128, -74.0060]} // Default to NYC
+                      zoom={13}
+                      style={{ height: '100%', width: '100%' }}
+                      whenCreated={mapInstance => {
+                        mapRef.current = mapInstance;
+                      }}
+                    >
+                      <TileLayer
+                        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                        url="https://tile.openstreetmap.de/{z}/{x}/{y}.png"
+                      />
+                      <LocationMarker />
+                      
+                      {/* Center marker that shows where the pin will be placed */}
+                      <div className="center-marker" style={{
+                        position: 'absolute',
+                        top: '50%',
+                        left: '50%',
+                        width: '20px',
+                        height: '20px',
+                        marginTop: '-20px', /* Offset for the marker height */
+                        marginLeft: '-10px',
+                        zIndex: 1000,
+                        pointerEvents: 'none'
+                      }}>
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" style={{
+                          filter: 'drop-shadow(0 1px 2px rgb(0 0 0 / 0.5))',
+                          color: '#ef4444'
+                        }}>
+                          <path fillRule="evenodd" d="M11.54 22.351l.07.04.028.016a.76.76 0 00.723 0l.028-.015.071-.041a16.975 16.975 0 001.144-.742 19.58 19.58 0 002.683-2.282c1.944-1.99 3.963-4.98 3.963-8.827a8.25 8.25 0 00-16.5 0c0 3.846 2.02 6.837 3.963 8.827a19.58 19.58 0 002.682 2.282 16.975 16.975 0 001.145.742zM12 13.5a3 3 0 100-6 3 3 0 000 6z" clipRule="evenodd" />
+                        </svg>
+                      </div>
+                    </MapContainer>
+                  )}
+                  
+                  {/* Place pin button - positioned at the bottom */}
+                  <button 
+                    className="absolute bottom-2 left-1/2 transform -translate-x-1/2 z-[999] px-4 py-1.5 rounded-md shadow-md bg-blue-600 text-white hover:bg-blue-700 transition-colors font-medium"
+                    onClick={placePinAtCenter}
+                  >
+                    Place Pin at Center
+                  </button>
+                </div>
+                
+                <div className="mt-2 bg-blue-50 p-2 rounded-md border border-blue-200">
+                  <p className="text-sm text-blue-700 flex items-center mb-1">
+                    <svg className="w-4 h-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    How to select a location:
+                  </p>
+                  <ol className="text-xs text-blue-700 list-decimal ml-5">
+                    <li>Pan and zoom the map to your desired location</li>
+                    <li>Position the red pin marker over your location</li>
+                    <li>Click "Place Pin at Center" to select that location</li>
+                    <li>Or search for a place using the search box above</li>
+                  </ol>
+                </div>
+                {newEventData.coordinates && (
+                  <div className="mt-2 bg-green-50 p-2 rounded-md border border-green-200">
+                    <p className="text-sm text-green-700 font-medium flex items-center">
+                      <svg className="w-4 h-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                      Location Selected!
+                    </p>
+                    <p className="text-xs text-green-700 mt-1">
+                      {newEventData.location || 'Unknown location'}
+                    </p>
+                    <p className="text-xs text-green-600 opacity-75">
+                      Coordinates: {newEventData.coordinates.lat.toFixed(6)}, {newEventData.coordinates.lng.toFixed(6)}
+                    </p>
+                  </div>
+                )}
               </div>
 
               <div className="flex justify-end space-x-3 mt-6">

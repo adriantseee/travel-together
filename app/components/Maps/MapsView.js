@@ -57,7 +57,8 @@ const transportColors = {
   walking: '#33cc33',
   driving: '#cc3366',
   transit: '#0066ff',
-  cycling: '#ff9900'
+  cycling: '#ff9900',
+  metro: '#9933cc'  // Add metro/train with a purple color
 };
 
 // Use environment variables for the API tokens
@@ -385,11 +386,96 @@ export default function MapsView({ tripDetails, onAddEvent }) {
   const [containerReady, setContainerReady] = useState(false);
   const [useFixedContainer, setUseFixedContainer] = useState(false);
   
+  // Add search state variables
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [selectedSearchResult, setSelectedSearchResult] = useState(null);
+  const [showSearchResults, setShowSearchResults] = useState(false);
+  const [searchTime, setSearchTime] = useState('12:00');
+  const [searchDuration, setSearchDuration] = useState(60);
+  
   // State for multi-stop routing
   const [isRoutingMode, setIsRoutingMode] = useState(false);
   const [routingPoints, setRoutingPoints] = useState([]); // Array of {lng, lat}
   const [multiStopRouteDetails, setMultiStopRouteDetails] = useState(null); // { path: [], duration: 0, distance: 0 }
   const [routingPointMarkers, setRoutingPointMarkers] = useState([]); // Array of Mapbox marker instances
+  const [transportMode, setTransportMode] = useState('driving'); // Add transportation mode state
+  
+  // Add state for the event modal
+  const [isEventModalOpen, setIsEventModalOpen] = useState(false);
+  const [eventDetails, setEventDetails] = useState({
+    name: '',
+    startTime: '12:00',
+    duration: 60,
+    location: '',
+    coordinates: null,
+    day: 0,
+    type: 'activity'
+  });
+  
+  // Get current user from local storage or auth
+  const [currentUser, setCurrentUser] = useState(null);
+  
+  // Initialize current user from local storage or auth
+  useEffect(() => {
+    const getUserInfo = async () => {
+      try {
+        // Try to get user from Supabase auth
+        const { data: { user } } = await supabase.auth.getUser();
+        
+        if (user) {
+          // Get additional user data from profiles table
+          const { data: profileData } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', user.id)
+            .single();
+            
+          if (profileData) {
+            setCurrentUser({
+              id: user.id,
+              name: profileData.full_name || user.email,
+              avatar: profileData.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(profileData.full_name || user.email)}&background=random`
+            });
+          } else {
+            // Use basic user info if profile not found
+            setCurrentUser({
+              id: user.id,
+              name: user.email,
+              avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(user.email)}&background=random`
+            });
+          }
+        } else {
+          // If no authenticated user, check localStorage for fallback
+          const storedUser = localStorage.getItem('user');
+          if (storedUser) {
+            setCurrentUser(JSON.parse(storedUser));
+          } else {
+            // Create default guest user
+            const guestUser = {
+              id: 'guest-' + Math.random().toString(36).substring(2, 9),
+              name: 'Guest User',
+              avatar: `https://ui-avatars.com/api/?name=Guest&background=random`
+            };
+            localStorage.setItem('user', JSON.stringify(guestUser));
+            setCurrentUser(guestUser);
+          }
+        }
+      } catch (error) {
+        console.error('Error getting user info:', error);
+        // Create default user on error
+        const defaultUser = {
+          id: 'default-' + Math.random().toString(36).substring(2, 9),
+          name: 'Default User',
+          avatar: `https://ui-avatars.com/api/?name=Default&background=random`
+        };
+        setCurrentUser(defaultUser);
+      }
+    };
+    
+    getUserInfo();
+  }, []);
   
   // Constants
   const fixedContainerId = 'fixed-mapbox-container';
@@ -673,7 +759,7 @@ export default function MapsView({ tripDetails, onAddEvent }) {
         containerHeight
       });
       
-      // If dimensions are zero, delay initialization and try again
+      // If dimensions are zero, delay initialization and try again in 300ms
       if (containerWidth === 0 || containerHeight === 0) {
         console.log('Container has zero dimensions, delaying initialization');
         
@@ -1312,31 +1398,24 @@ export default function MapsView({ tripDetails, onAddEvent }) {
   
   // Add addAttractionToItinerary as a callback
   const addAttractionToItinerary = useCallback((attraction) => {
-    // In a real app, you would add this to the trip's itinerary in the database
     console.log('Adding to itinerary:', attraction);
     
-    // If we have an onAddEvent callback, use it to add to the calendar
-    if (onAddEvent && typeof onAddEvent === 'function') {
-      // Convert the attraction to a calendar event format
-      const newEvent = {
-        activity: attraction.name,
-        time: '12:00', // Default to noon
-        day_index: selectedDay,
-        duration: 60, // Default 1 hour
-        type: attraction.type,
-        coordinates: {
-          latitude: attraction.coordinates.lat,
-          longitude: attraction.coordinates.lng
-        }
-      };
-      
-      onAddEvent(newEvent);
-      alert(`Added ${attraction.name} to Day ${selectedDay + 1} itinerary!`);
-    } else {
-      // If no callback, just show an alert
-      alert(`Would add ${attraction.name} to Day ${selectedDay + 1}!`);
-    }
-  }, [selectedDay, onAddEvent]);
+    // Open the modal with initial details
+    setEventDetails({
+      name: attraction.name,
+      startTime: '12:00',
+      duration: 60,
+      location: attraction.vicinity || '',
+      coordinates: {
+        latitude: attraction.coordinates.lat,
+        longitude: attraction.coordinates.lng
+      },
+      day: selectedDay,
+      type: attraction.type || 'activity'
+    });
+    
+    setIsEventModalOpen(true);
+  }, [selectedDay]);
   
   // Define updateMarkerVisibility before using it
   const updateMarkerVisibility = useCallback(() => {
@@ -1722,9 +1801,10 @@ export default function MapsView({ tripDetails, onAddEvent }) {
       }
     }
     
-    // Add button
+    // Add button with unique ID
+    const buttonId = `add-to-itinerary-${attraction.id.replace(/[^a-zA-Z0-9]/g, '-')}`;
     popupHtml += `
-        <button class="add-to-itinerary" style="width: 100%; background-color: #4299e1; color: white; border: none; padding: 8px; border-radius: 4px; cursor: pointer; margin-top: 5px; font-weight: 600;">Add to Day ${selectedDay + 1}</button>
+        <button id="${buttonId}" class="add-to-itinerary" style="width: 100%; background-color: #4299e1; color: white; border: none; padding: 8px; border-radius: 4px; cursor: pointer; margin-top: 5px; font-weight: 600;">Add to Day ${selectedDay + 1}</button>
       </div>
     `;
     
@@ -1751,12 +1831,17 @@ export default function MapsView({ tripDetails, onAddEvent }) {
       isNearby: true
     };
     
-    // Add click handler to add button in popup
+    // Add click handler to add button in popup with unique ID
     marker.getPopup().on('open', () => {
       setTimeout(() => {
-        const button = document.querySelector('.add-to-itinerary');
+        const button = document.getElementById(buttonId);
         if (button) {
-          button.addEventListener('click', () => {
+          // Remove any existing event listeners
+          const newButton = button.cloneNode(true);
+          button.parentNode.replaceChild(newButton, button);
+          
+          // Add fresh event listener
+          newButton.addEventListener('click', () => {
             addAttractionToItinerary(attraction);
             marker.togglePopup();
           });
@@ -1910,7 +1995,7 @@ export default function MapsView({ tripDetails, onAddEvent }) {
                     }).filter(url => url !== null);
                   }
                   
-                  return {
+          return {
                     id: place.place_id,
                     name: place.name,
                     type: determineLocationType(place.types[0] || 'activity'),
@@ -2084,6 +2169,9 @@ export default function MapsView({ tripDetails, onAddEvent }) {
   
   // Function to create a new custom marker on map click
   const addCustomMarker = useCallback((e) => {
+    // Always hide search results when clicking on the map 
+    setShowSearchResults(false);
+    
     if (!map.current) return;
     
     if (e.originalEvent.shiftKey) {
@@ -2400,6 +2488,74 @@ export default function MapsView({ tripDetails, onAddEvent }) {
     clearRoutingVisuals();
   }, [clearRoutingVisuals]);
 
+  // Add a function to get directions from Google API
+  const getGoogleDirections = useCallback(async (points, mode) => {
+    if (points.length < 2) return null;
+    
+    try {
+      // For Google API, we need to handle waypoints differently
+      const origin = points[0];
+      const destination = points[points.length - 1];
+      const waypoints = points.slice(1, points.length - 1).map(point => 
+        `${point.lat},${point.lng}`
+      ).join('|');
+      
+      // Convert our mode names to Google's mode names
+      let googleMode = 'driving';
+      let transitMode = ''; // Properly declare the transit mode variable
+      
+      if (mode === 'walking') googleMode = 'walking';
+      if (mode === 'cycling') googleMode = 'bicycling';
+      if (mode === 'transit') googleMode = 'transit';
+      if (mode === 'metro') {
+        googleMode = 'transit';
+        // Add transit mode parameter for metro/train only
+        transitMode = 'subway|train';
+      }
+      
+      // Build URL
+      let url = `https://maps.googleapis.com/maps/api/directions/json?origin=${origin.lat},${origin.lng}&destination=${destination.lat},${destination.lng}&mode=${googleMode}&key=${GOOGLE_MAPS_API_KEY}`;
+      
+      // Add waypoints if any
+      if (waypoints) {
+        url += `&waypoints=${waypoints}`;
+      }
+      
+      // Add transit mode if applicable
+      if (mode === 'metro') {
+        url += `&transit_mode=${transitMode}`;
+      }
+      
+      console.log(`Requesting Google Directions with mode: ${googleMode}`);
+      
+      // Typically, you'd need a server endpoint to make this request
+      // due to CORS restrictions. For now, we'll log what would be requested
+      console.log(`Google Directions API would be called with URL: ${url}`);
+      
+      // In a real implementation, you'd call a server endpoint like:
+      const response = await axios.get(`/api/google-directions?origin=${origin.lat},${origin.lng}&destination=${destination.lat},${destination.lng}&mode=${googleMode}${waypoints ? `&waypoints=${waypoints}` : ''}${mode === 'metro' ? `&transit_mode=${transitMode}` : ''}`);
+      
+      if (response.data.routes && response.data.routes.length > 0) {
+        const route = response.data.routes[0];
+        
+        // Convert Google Directions format to our format
+        const path = route.overview_polyline ? 
+          google.maps.geometry.encoding.decodePath(route.overview_polyline.points).map(point => [point.lng(), point.lat()]) : 
+          [];
+          
+          return {
+          path: path,
+          distance: route.legs.reduce((acc, leg) => acc + leg.distance.value, 0),
+          duration: route.legs.reduce((acc, leg) => acc + leg.duration.value, 0)
+        };
+      }
+    } catch (error) {
+      console.error('Error getting Google directions:', error);
+    }
+    
+    return null;
+  }, [GOOGLE_MAPS_API_KEY]); // Remove transitMode from dependencies as it's defined inside the function
+
   const calculateAndDrawMultiStopRoute = useCallback(async () => {
     if (!map.current || routingPoints.length < 2) return;
     
@@ -2422,30 +2578,68 @@ export default function MapsView({ tripDetails, onAddEvent }) {
         mapContainer.current.appendChild(loadingEl);
       }
       
-      // Prepare coordinates string for the API
-      const coordinatesString = routingPoints
-        .map(point => `${point.lng},${point.lat}`)
-        .join(';');
+      let route = null;
       
-      // Call Mapbox Directions API
-      const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${coordinatesString}?geometries=geojson&steps=true&access_token=${MAPBOX_TOKEN}`;
+      // Use Google Directions API for metro mode
+      if (transportMode === 'metro') {
+        console.log('Using Google Directions API for metro/train routing');
+        route = await getGoogleDirections(routingPoints, transportMode);
+        
+        // If Google API fails, fall back to Mapbox
+        if (!route) {
+          console.log('Google Directions failed, falling back to Mapbox');
+          // Fall back to Mapbox but still use the metro style
+        }
+      }
       
-      const response = await axios.get(url);
+      // If we don't have a route yet (either not metro mode or Google API failed), use Mapbox
+      if (!route) {
+        // Prepare coordinates string for the API
+        const coordinatesString = routingPoints
+          .map(point => `${point.lng},${point.lat}`)
+          .join(';');
+        
+        // Get the proper transportation profile for Mapbox API
+        // Mapbox supports: driving, walking, cycling
+        // For transit and metro, we fall back to driving but style differently
+        let mapboxProfile = transportMode;
+        if (transportMode === 'transit' || transportMode === 'metro') {
+          mapboxProfile = 'driving';
+          console.log(`Note: ${transportMode} mode falls back to driving directions as Mapbox does not support public transit routing directly`);
+        }
+        
+        // Call Mapbox Directions API with the selected transportation mode
+        const url = `https://api.mapbox.com/directions/v5/mapbox/${mapboxProfile}/${coordinatesString}?geometries=geojson&steps=true&access_token=${MAPBOX_TOKEN}`;
+        
+        const response = await axios.get(url);
+        
+        if (response.data.routes && response.data.routes.length > 0) {
+          const mapboxRoute = response.data.routes[0];
+          
+          route = {
+            path: mapboxRoute.geometry.coordinates,
+            distance: mapboxRoute.distance,
+            duration: mapboxRoute.duration
+          };
+        }
+      }
       
       // Remove loading indicator
       if (loadingEl && loadingEl.parentNode) {
         loadingEl.parentNode.removeChild(loadingEl);
       }
       
-      if (response.data.routes && response.data.routes.length > 0) {
-        const route = response.data.routes[0];
-        
+      if (route) {
         // Store route details
         setMultiStopRouteDetails({
-          path: route.geometry.coordinates,
+          path: route.path,
           distance: route.distance, // in meters
-          duration: route.duration // in seconds
+          duration: route.duration, // in seconds
+          mode: transportMode // Store the transport mode used
         });
+        
+        // Get route color based on transport mode
+        const routeColor = transportColors[transportMode] || '#3887be';
         
         // Prepare to draw route on map
         // First, check if source already exists
@@ -2458,7 +2652,7 @@ export default function MapsView({ tripDetails, onAddEvent }) {
               properties: {},
               geometry: {
                 type: 'LineString',
-                coordinates: route.geometry.coordinates
+                coordinates: route.path
               }
             }
           });
@@ -2472,7 +2666,7 @@ export default function MapsView({ tripDetails, onAddEvent }) {
               'line-cap': 'round'
             },
             paint: {
-              'line-color': '#3887be',
+              'line-color': routeColor,
               'line-width': 5,
               'line-opacity': 0.75
             }
@@ -2484,14 +2678,17 @@ export default function MapsView({ tripDetails, onAddEvent }) {
             properties: {},
             geometry: {
               type: 'LineString',
-              coordinates: route.geometry.coordinates
+              coordinates: route.path
             }
           });
+          
+          // Update the route color based on transport mode
+          map.current.setPaintProperty('multiStopRoute', 'line-color', routeColor);
         }
         
         // Fit map to the route
         const bounds = new mapboxgl.LngLatBounds();
-        route.geometry.coordinates.forEach(coord => {
+        route.path.forEach(coord => {
           bounds.extend(coord);
         });
         
@@ -2517,11 +2714,14 @@ export default function MapsView({ tripDetails, onAddEvent }) {
         loadingEl.parentNode.removeChild(loadingEl);
       }
     }
-  }, [map, mapContainer, routingPoints, MAPBOX_TOKEN]);
+  }, [map, mapContainer, routingPoints, MAPBOX_TOKEN, transportMode, getGoogleDirections]);
 
   const handleMapClickForRouting = useCallback((e) => {
     if (!map.current || !isRoutingMode) return;
 
+    // Hide search results when adding routing points
+    setShowSearchResults(false);
+    
     const coords = e.lngLat;
     setRoutingPoints(prev => [...prev, { lng: coords.lng, lat: coords.lat }]);
 
@@ -2662,8 +2862,418 @@ export default function MapsView({ tripDetails, onAddEvent }) {
     };
   }, [mapInitialized, initializeMapDirectly]);
 
+  // Add function to search for places by name
+  const searchPlacesByName = useCallback(async (query) => {
+    if (!query.trim()) return [];
+    
+    setIsSearching(true);
+    
+    try {
+      // Try using Google Places API first if available
+      if (googlePlacesService && googleMapsLoaded) {
+        return new Promise((resolve, reject) => {
+          // Create location object using trip coordinates
+          const location = {
+            lat: Number(tripDetails?.latitude) || 
+                 Number(tripDetails?.coordinates?.lat) || 
+                 defaultCoords.lat,
+            lng: Number(tripDetails?.longitude) || 
+                 Number(tripDetails?.coordinates?.lng) || 
+                 defaultCoords.lng
+          };
+          
+          console.log('Searching near coordinates:', location);
+          
+          const request = {
+            query: query,
+            fields: ['name', 'geometry', 'formatted_address', 'place_id', 'types', 'photos', 'rating'],
+            // Add location and radius to prioritize results near the trip location
+            location: location,
+            radius: 50000 // 50km radius
+          };
+          
+          googlePlacesService.textSearch(request, (results, status) => {
+            if (status === window.google.maps.places.PlacesServiceStatus.OK && results) {
+              // Process and format the results
+              const places = results.map(place => {
+                let photoUrls = [];
+                
+                // Safely extract photo URLs
+                if (place.photos && place.photos.length > 0) {
+                  photoUrls = place.photos.map(photo => {
+                    try {
+                      // First try using the getUrl method from the API
+                      if (typeof photo.getUrl === 'function') {
+                        return photo.getUrl({ maxWidth: 400, maxHeight: 300 });
+                      } 
+                      // Fall back to photo_reference if available
+                      else if (photo.photo_reference) {
+                        return `https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photo_reference=${photo.photo_reference}&key=${GOOGLE_MAPS_API_KEY}`;
+                      }
+                      return null;
+                    } catch (err) {
+                      console.error('Error getting photo URL:', err);
+                      return null;
+                    }
+                  }).filter(url => url !== null);
+                }
+                
+                return {
+                  id: place.place_id,
+                  name: place.name,
+                  type: determineLocationType(place.types ? place.types[0] : 'activity'),
+                  coordinates: { 
+                    lat: place.geometry.location.lat(), 
+                    lng: place.geometry.location.lng() 
+                  },
+                  rating: place.rating,
+                  photos: photoUrls,
+                  vicinity: place.formatted_address || place.vicinity,
+                  priceLevel: place.price_level
+                };
+              });
+              
+              setIsSearching(false);
+              resolve(places);
+            } else {
+              console.log('Google Places search failed with status:', status);
+              reject(new Error(`Google Places search failed: ${status}`));
+            }
+          });
+        });
+      } else {
+        // Fallback to OSM Nominatim API with trip coordinates
+        const tripLat = Number(tripDetails?.latitude) || 
+                       Number(tripDetails?.coordinates?.lat) || 
+                       defaultCoords.lat;
+        const tripLng = Number(tripDetails?.longitude) || 
+                       Number(tripDetails?.coordinates?.lng) || 
+                       defaultCoords.lng;
+                       
+        // Add viewbox parameter to bias results to the trip area
+        const response = await axios.get(
+          `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&accept-language=en&addressdetails=1&limit=10&viewbox=${tripLng-0.5},${tripLat-0.5},${tripLng+0.5},${tripLat+0.5}&bounded=1`
+        );
+        
+        if (response.data && response.data.length > 0) {
+          const places = response.data.map(place => ({
+            id: `osm-${place.place_id}`,
+            name: place.display_name.split(',')[0],
+            type: determineLocationType(place.category || place.type || 'activity'),
+            coordinates: { 
+              lat: parseFloat(place.lat), 
+              lng: parseFloat(place.lon) 
+            },
+            rating: 0, // OSM doesn't provide ratings
+            vicinity: place.display_name,
+          }));
+          
+          setIsSearching(false);
+          return places;
+        }
+      }
+    } catch (error) {
+      console.error('Error searching for places:', error);
+    }
+    
+    setIsSearching(false);
+    return [];
+  }, [googlePlacesService, googleMapsLoaded, determineLocationType, GOOGLE_MAPS_API_KEY, tripDetails, defaultCoords]);
+
+  // Handle search submission
+  const handleSearch = useCallback(async (e) => {
+    e.preventDefault();
+    if (!searchQuery.trim()) return;
+    
+    try {
+      const results = await searchPlacesByName(searchQuery);
+      setSearchResults(results);
+      setShowSearchResults(true);
+      
+      // If we have results and a map, let's add markers for them
+      if (results.length > 0 && map.current) {
+        // Clear any existing search result markers
+        const markersToRemove = [];
+        mapMarkers.forEach(marker => {
+          if (marker && marker._customData?.isSearchResult) {
+            marker.remove();
+            markersToRemove.push(marker);
+          }
+        });
+        
+        if (markersToRemove.length > 0) {
+          setMapMarkers(prev => prev.filter(marker => !markersToRemove.includes(marker)));
+        }
+        
+        // Batch creating markers to avoid multiple state updates
+        const newMarkers = [];
+        
+        // Add markers for each search result
+        results.forEach(place => {
+          // Create marker element with a different style for search results
+          const markerEl = document.createElement('div');
+          markerEl.className = 'search-result-marker';
+          markerEl.style.backgroundColor = 'white';
+          markerEl.style.border = '2px solid #3b82f6';
+          markerEl.style.width = '25px';
+          markerEl.style.height = '25px';
+          markerEl.style.borderRadius = '50%';
+          markerEl.style.display = 'flex';
+          markerEl.style.justifyContent = 'center';
+          markerEl.style.alignItems = 'center';
+          markerEl.style.color = '#3b82f6';
+          markerEl.style.boxShadow = '0 2px 4px rgba(0,0,0,0.3)';
+          markerEl.style.cursor = 'pointer';
+          markerEl.style.fontSize = '12px';
+          markerEl.style.fontWeight = 'bold';
+          markerEl.innerHTML = `<span>?</span>`;
+          markerEl.title = place.name;
+          
+          // Add popup content for the marker
+    let popupHtml = `
+            <div class="place-popup" style="min-width: 200px; max-width: 300px;">
+              <strong style="display: block; margin-bottom: 5px; font-size: 16px; color: #1a202c;">${place.name}</strong>
+              ${place.rating ? `
+        <div style="display: flex; align-items: center; margin-bottom: 5px;">
+                  <span style="color: #f8b400;">${"★".repeat(Math.round(place.rating || 0))}</span>
+                  <span style="color: #ccc;">${"★".repeat(5 - Math.round(place.rating || 0))}</span>
+                  <span style="margin-left: 5px; color: #4a5568; font-size: 14px;">${place.rating}</span>
+        </div>
+              ` : ''}
+    `;
+    
+    // Add address if available
+          if (place.vicinity) {
+            popupHtml += `<div style="margin-bottom: 5px; font-size: 14px; color: #2d3748;">${place.vicinity}</div>`;
+          }
+          
+          // Add a photo if available
+          if (place.photos && place.photos.length > 0) {
+            const photoUrl = place.photos[0];
+            if (photoUrl) {
+              popupHtml += `
+                <div style="width: 100%; height: 120px; margin-bottom: 5px; position: relative; overflow: hidden; border-radius: 4px; background-color: #f0f0f0;">
+                  <img 
+                    src="${photoUrl}" 
+                    style="width: 100%; height: 100%; object-fit: cover;" 
+                    onload="this.style.opacity='1'; this.parentNode.querySelector('.loader-overlay').style.display='none';" 
+                    onerror="this.onerror=null; this.parentNode.innerHTML='<div style=\\'padding: 10px; text-align: center; color: #4a5568;\\'>Image unavailable</div>';" 
+                    loading="lazy"
+                  />
+                  <div class="loader-overlay" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; background-color: rgba(0,0,0,0.1);">
+                    <span style="display: inline-block; width: 20px; height: 20px; border: 2px solid #4299e1; border-radius: 50%; border-top-color: transparent; animation: spin 1s linear infinite;"></span>
+                  </div>
+                </div>
+              `;
+            }
+          }
+          
+          // Add button to add to calendar with unique ID
+          const calendarButtonId = `add-to-calendar-${place.id.replace(/[^a-zA-Z0-9]/g, '-')}`;
+          popupHtml += `
+              <button id="${calendarButtonId}" class="add-to-calendar-btn" data-place-id="${place.id}" style="width: 100%; background-color: #4299e1; color: white; border: none; padding: 8px; border-radius: 4px; cursor: pointer; margin-top: 5px; font-weight: 600;">Add to Day ${selectedDay + 1}</button>
+            </div>
+          `;
+          
+          // Create and add marker to map
+          const marker = new mapboxgl.Marker({
+            element: markerEl,
+            draggable: false
+          })
+            .setLngLat([place.coordinates.lng, place.coordinates.lat])
+            .setPopup(
+              new mapboxgl.Popup({
+                offset: 25,
+                closeButton: true,
+                closeOnClick: false,
+                maxWidth: '300px'
+              }).setHTML(popupHtml)
+            )
+            .addTo(map.current);
+          
+          // Store type with marker
+          marker._customData = { 
+            id: place.id,
+            type: place.type,
+            isSearchResult: true
+          };
+          
+          // Add click handler to add button in popup using the unique ID
+          marker.getPopup().on('open', () => {
+            setTimeout(() => {
+              const addButton = document.getElementById(calendarButtonId);
+              if (addButton) {
+                // Remove any existing event listeners
+                const newButton = addButton.cloneNode(true);
+                addButton.parentNode.replaceChild(newButton, addButton);
+                
+                // Add fresh event listener
+                newButton.addEventListener('click', () => {
+                  setSelectedSearchResult(place);
+                  marker.togglePopup();
+                });
+              }
+            }, 0);
+          });
+          
+          newMarkers.push(marker);
+        });
+        
+        // Then update the state once with all markers
+        if (newMarkers.length > 0) {
+          setMapMarkers(prev => [...prev, ...newMarkers]);
+        }
+        
+        // Fly to first result to show it on map
+        if (results.length > 0) {
+          map.current.flyTo({
+            center: [results[0].coordinates.lng, results[0].coordinates.lat],
+            zoom: 14,
+            essential: true
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Error performing search:', error);
+      setSearchResults([]);
+    }
+  }, [searchQuery, searchPlacesByName, map, mapMarkers, selectedDay]);
+  
+  // Handle adding a search result to the calendar
+  const handleAddSearchResultToCalendar = useCallback((place) => {
+    if (!place) return;
+    
+    // Open the modal with initial details from the place
+    setEventDetails({
+      name: place.name,
+      startTime: searchTime,
+      duration: searchDuration,
+      location: place.vicinity || '',
+      coordinates: {
+        latitude: place.coordinates.lat,
+        longitude: place.coordinates.lng
+      },
+      day: selectedDay,
+      type: place.type || 'activity'
+    });
+    
+    // Hide search results when opening modal
+    setShowSearchResults(false);
+    
+    // Open the modal
+    setIsEventModalOpen(true);
+  }, [selectedDay, searchTime, searchDuration]);
+  
+  // Add a function to handle the event form submission
+  const handleAddEventSubmit = useCallback(() => {
+    try {
+      // Generate a unique ID for the event
+      const newEventId = `event-${Math.random().toString(36).substring(2, 9)}`;
+      
+      // Calculate end time based on duration
+      const [hours, minutes] = eventDetails.startTime.split(':').map(Number);
+      const durationHours = Math.floor(eventDetails.duration / 60);
+      const durationMinutes = eventDetails.duration % 60;
+      
+      let endHours = hours + durationHours;
+      let endMinutes = minutes + durationMinutes;
+      
+      if (endMinutes >= 60) {
+        endHours += 1;
+        endMinutes -= 60;
+      }
+      
+      const endTime = `${String(endHours).padStart(2, '0')}:${String(endMinutes).padStart(2, '0')}`;
+      
+      // Format event for the calendar component
+      const calendarEvent = {
+        id: newEventId,
+        activity: eventDetails.name,
+        time: eventDetails.startTime,
+        endTime: endTime,
+        location: eventDetails.location,
+        coordinates: {
+          latitude: eventDetails.coordinates?.latitude,
+          longitude: eventDetails.coordinates?.longitude
+        },
+        day_index: eventDetails.day,
+        type: eventDetails.type,
+        createdBy: {
+          id: currentUser?.id,
+          name: currentUser?.name,
+          avatar: currentUser?.avatar
+        },
+        createdAt: new Date().toISOString()
+      };
+      
+      // Always save to Supabase, regardless of callback
+      // Format the event data for database upload
+      const newEvent = {
+        id: newEventId,
+        trip_id: tripDetails.id,
+        day_index: eventDetails.day,
+        activity: eventDetails.name,
+        time: eventDetails.startTime,
+        end_time: endTime,
+        // Keep separate lat/lng fields for compatibility
+        latitude: eventDetails.coordinates?.latitude,
+        longitude: eventDetails.coordinates?.longitude,
+        created_by_user_id: currentUser?.id,
+        created_by_name: currentUser?.name || 'User',
+        created_by_avatar: currentUser?.avatar || '',
+        created_at: new Date().toISOString()
+      };
+      
+      // Save directly to Supabase database
+      supabase
+        .from('trip_events')
+        .insert(newEvent)
+        .then(({ data, error }) => {
+          if (error) {
+            console.error('Error adding event to database:', error);
+            alert('Failed to add event to calendar. Please try again.');
+          } else {
+            console.log('Successfully added event to Supabase:', newEvent);
+            
+            // AFTER successful database save, also call the callback if available
+            if (onAddEvent && typeof onAddEvent === 'function') {
+              onAddEvent(calendarEvent);
+              console.log('Also notified calendar component via callback:', calendarEvent);
+            }
+            
+            alert(`Successfully added "${eventDetails.name}" to Day ${eventDetails.day + 1}!`);
+            
+            // Close the modal
+            setIsEventModalOpen(false);
+            
+            // Reset form
+            setEventDetails({
+              name: '',
+              startTime: '12:00',
+              duration: 60,
+              location: '',
+              coordinates: null,
+              day: selectedDay,
+              type: 'activity'
+            });
+          }
+        });
+        
+    } catch (error) {
+      console.error('Error adding event to calendar:', error);
+      alert('Failed to add event to database. Please try again.');
+    }
+  }, [eventDetails, tripDetails.id, currentUser, onAddEvent, selectedDay]);
+
+  // Effect to add the selected search result to calendar
+  useEffect(() => {
+    if (selectedSearchResult) {
+      handleAddSearchResultToCalendar(selectedSearchResult);
+    }
+  }, [selectedSearchResult, handleAddSearchResultToCalendar]);
+
   return (
-    <div className="h-full w-full flex flex-col bg-white">
+    <div className="h-full w-full flex flex-col bg-white overflow-auto">
       <style>
         {`
           ${mapStyles}
@@ -2672,7 +3282,7 @@ export default function MapsView({ tripDetails, onAddEvent }) {
           .map-placeholder {
             flex: 1;
             min-height: 500px;
-            height: 75vh;
+            max-height: 75vh;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -2685,7 +3295,7 @@ export default function MapsView({ tripDetails, onAddEvent }) {
           .map-container-wrapper {
             flex: 1;
             min-height: 500px;
-            height: 75vh;
+            max-height: 75vh;
             position: relative;
             min-width: 500px;
             background-color: #e9eef2;
@@ -2705,6 +3315,29 @@ export default function MapsView({ tripDetails, onAddEvent }) {
             min-height: 500px;
             min-width: 500px;
             background-color: #e9eef2;
+          }
+          
+          /* Fix for scrolling issues - make everything one scrollable page */
+          html, body, #__next, main {
+            height: 100%;
+            overflow-y: auto !important;
+          }
+          
+          /* Single scrollable container for entire view */
+          .maps-view-container {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+            overflow-y: auto;
+            position: relative;
+            flex: 1;
+          }
+          
+          /* Disable nested scrolling containers */
+          .controls-wrapper {
+            overflow-y: visible;
+            padding-right: 5px;
+            -webkit-overflow-scrolling: touch;
           }
           
           /* Improved text styling for better visibility */
@@ -2733,10 +3366,103 @@ export default function MapsView({ tripDetails, onAddEvent }) {
             color: #ebf8ff;
           }
           
+          /* Improved search input styles */
+          .search-input {
+            color: #000000;
+            font-weight: 500;
+            font-size: 1rem;
+          }
+          
+          .search-input::placeholder {
+            color: #6b7280;
+            opacity: 0.8;
+          }
+          
           .help-message {
             color: #f7fafc !important;
             font-weight: 500 !important;
             text-shadow: 0px 1px 2px rgba(0,0,0,0.3) !important;
+          }
+          
+          /* Improved search results styling */
+          .search-container {
+            position: relative;
+            z-index: 1000;
+          }
+          
+          .search-results {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            z-index: 1000;
+            background-color: white;
+            border-radius: 0 0 8px 8px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            max-height: 400px;
+            overflow-y: auto;
+            margin-top: 2px;
+            border: 1px solid #e2e8f0;
+          }
+          
+          .search-result-item {
+            padding: 10px 15px;
+            border-bottom: 1px solid #e2e8f0;
+            cursor: pointer;
+            transition: background-color 0.2s;
+          }
+          
+          .search-result-item:hover {
+            background-color: #f7fafc;
+          }
+          
+          .search-result-item:last-child {
+            border-bottom: none;
+          }
+          
+          .search-form {
+            position: relative;
+            z-index: 1001;
+          }
+          
+          /* Search result modal */
+          .search-result-modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+          }
+          
+          .search-result-modal-content {
+            background-color: white;
+            border-radius: 8px;
+            padding: 20px;
+            width: 90%;
+            max-width: 500px;
+            box-shadow: 0 10px 15px rgba(0, 0, 0, 0.1);
+          }
+          
+          /* Add button styling */
+          .add-to-calendar-button {
+            background-color: #4299e1;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            padding: 6px 12px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background-color 0.2s;
+          }
+          
+          .add-to-calendar-button:hover {
+            background-color: #3182ce;
           }
         `}
       </style>
@@ -2748,148 +3474,284 @@ export default function MapsView({ tripDetails, onAddEvent }) {
         </div>
       </div>
       
-      <div className="flex-1 p-4 flex flex-col">
+      {/* Add search form with container - hide when event modal is open */}
+      {!isEventModalOpen && (
+        <div className="bg-white border-b border-gray-200 py-3 px-4 shadow-sm search-container">
+          <form onSubmit={handleSearch} className="search-form flex gap-2">
+            <div className="flex-1">
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search for hotels, restaurants, attractions..."
+                className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 search-input"
+              />
+            </div>
+            <button
+              type="submit"
+              className="px-4 py-2 bg-blue-600 text-white font-medium rounded-md hover:bg-blue-700 transition-colors"
+              disabled={isSearching}
+            >
+              {isSearching ? 'Searching...' : 'Search'}
+            </button>
+          </form>
+          
+          {/* Search results */}
+          {showSearchResults && searchResults.length > 0 && (
+            <div className="search-results">
+              <div className="p-2 bg-blue-50 border-b border-blue-200 flex justify-between items-center">
+                <span className="text-sm font-medium text-blue-700">
+                  {searchResults.length} results found
+                </span>
+                <button 
+                  onClick={() => setShowSearchResults(false)}
+                  className="text-gray-500 hover:text-gray-700"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                  </svg>
+                </button>
+              </div>
+              <div className="max-h-64 overflow-y-auto">
+                {searchResults.map(result => (
+                  <div 
+                    key={result.id} 
+                    className="search-result-item hover:bg-gray-50 p-3"
+                    onClick={() => {
+                      // Navigate to this point on the map
+                      if (map.current) {
+                        map.current.flyTo({
+                          center: [result.coordinates.lng, result.coordinates.lat],
+                          zoom: 16,
+                          essential: true
+                        });
+                        
+                        // Find marker for this result and open its popup
+                        const marker = mapMarkers.find(m => m._customData?.id === result.id);
+                        if (marker && marker.togglePopup) {
+                          setTimeout(() => marker.togglePopup(), 500);
+                        }
+                      }
+                      
+                      // Close search results
+                      setShowSearchResults(false);
+                    }}
+                  >
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <h3 className="font-medium text-gray-900">{result.name}</h3>
+                        {result.vicinity && (
+                          <p className="text-sm text-gray-600 mt-1">{result.vicinity}</p>
+                        )}
+                      </div>
+                      <div className="flex flex-col items-end">
+                        <span className={`inline-block px-2 py-1 text-xs rounded-full ${
+                          result.type === 'hotel' ? 'bg-blue-100 text-blue-800' :
+                          result.type === 'restaurant' ? 'bg-orange-100 text-orange-800' :
+                          result.type === 'activity' ? 'bg-green-100 text-green-800' :
+                          'bg-gray-100 text-gray-800'
+                        }`}>
+                          {result.type}
+                        </span>
+                        
+                        {result.rating > 0 && (
+                          <div className="flex items-center mt-1">
+                            <span className="text-yellow-500 mr-1">★</span>
+                            <span className="text-sm text-gray-600">{result.rating}</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    
+                    {/* Add to calendar button */}
+                    <div className="mt-3 flex justify-end">
+                      <button 
+                        onClick={(e) => {
+                          e.stopPropagation(); // Prevent triggering the parent onClick
+                          handleAddSearchResultToCalendar(result);
+                        }}
+                        className="add-to-calendar-button"
+                      >
+                        Add to Calendar
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+      
+      <div className="flex-1 p-4 flex flex-col maps-view-container">
         {isLoading ? (
           <div className="h-full flex items-center justify-center">
             <div className="flex flex-col items-center">
               <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
-              <p className="mt-2 text-gray-600" style={{color: "#4a5568", fontWeight: 500}}>Loading map...</p>
+              <p className="mt-2 text-gray-800" style={{fontWeight: 500}}>Loading map...</p>
             </div>
           </div>
         ) : (
           <div className="h-full flex flex-col md:flex-row space-y-4 md:space-y-0 md:space-x-4">
             {/* Map Controls */}
-            <div className="w-full md:w-64 space-y-4">
-              {/* Day selector */}
-              <div className="bg-white rounded-lg p-4 shadow-sm">
-                <h3 className="font-semibold text-gray-800 mb-2" style={{color: "#1a202c"}}>Select Day</h3>
-                <div className="flex flex-wrap gap-2">
-                  {Array.from({ length: tripDetails?.numberOfDays || 3 }).map((_, index) => (
-                    <button
-                      key={index}
-                      className={`py-1 px-3 rounded-full text-sm ${
-                        selectedDay === index 
-                          ? 'bg-blue-600 text-white' 
-                          : 'bg-gray-100 text-gray-800 hover:bg-gray-200'
-                      }`}
-                      style={selectedDay !== index ? {color: "#1a202c"} : {}}
-                      onClick={() => handleDayChange(index)}
-                    >
-                      Day {index + 1}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              
-              {/* Layer toggles */}
-              <div className="bg-white rounded-lg p-4 shadow-sm">
-                <h3 className="font-semibold text-gray-800 mb-2" style={{color: "#1a202c"}}>Map Layers</h3>
-                <div className="space-y-2">
-                  <label className="flex items-center space-x-2 cursor-pointer" style={{color: "#2d3748"}}>
-                    <input 
-                      type="checkbox" 
-                      checked={activeLayers.hotels} 
-                      onChange={() => toggleLayer('hotels')}
-                      className="rounded text-blue-600 focus:ring-blue-500"
-                    />
-                    <span>Hotels</span>
-                    <span className="ml-auto w-3 h-3 rounded-full" style={{ backgroundColor: markerTypes.hotel.color }}></span>
-                  </label>
-                  
-                  <label className="flex items-center space-x-2 cursor-pointer" style={{color: "#2d3748"}}>
-                    <input 
-                      type="checkbox" 
-                      checked={activeLayers.restaurants} 
-                      onChange={() => toggleLayer('restaurants')}
-                      className="rounded text-blue-600 focus:ring-blue-500"
-                    />
-                    <span>Restaurants</span>
-                    <span className="ml-auto w-3 h-3 rounded-full" style={{ backgroundColor: markerTypes.restaurant.color }}></span>
-                  </label>
-                  
-                  <label className="flex items-center space-x-2 cursor-pointer" style={{color: "#2d3748"}}>
-                    <input 
-                      type="checkbox" 
-                      checked={activeLayers.activities} 
-                      onChange={() => toggleLayer('activities')}
-                      className="rounded text-blue-600 focus:ring-blue-500"
-                    />
-                    <span>Activities</span>
-                    <span className="ml-auto w-3 h-3 rounded-full" style={{ backgroundColor: markerTypes.activity.color }}></span>
-                  </label>
-                  
-                  <label className="flex items-center space-x-2 cursor-pointer" style={{color: "#2d3748"}}>
-                    <input 
-                      type="checkbox" 
-                      checked={activeLayers.transport} 
-                      onChange={() => toggleLayer('transport')}
-                      className="rounded text-blue-600 focus:ring-blue-500"
-                    />
-                    <span>Transport</span>
-                    <span className="ml-auto w-3 h-3 rounded-full" style={{ backgroundColor: markerTypes.transport.color }}></span>
-                  </label>
-                </div>
-              </div>
-              
-              {/* Suggestion button */}
-              <button
-                onClick={handleSuggestNearby}
-                className={`w-full py-2 px-4 rounded ${
-                  showSuggestionsPanel 
-                    ? 'bg-blue-700 text-white' 
-                    : 'bg-blue-600 hover:bg-blue-700 text-white'
-                }`}
-                style={{fontWeight: 600}}
-              >
-                {showSuggestionsPanel ? 'Hide Suggestions' : 'Suggest Nearby'}
-              </button>
-              
-              {/* Multi-stop Routing Controls */}
-              <div className="bg-white rounded-lg p-4 shadow-sm space-y-3">
-                <h3 className="font-semibold text-gray-800 mb-1" style={{color: "#1a202c"}}>Multi-Stop Route</h3>
-                <button
-                  onClick={toggleRoutingMode} // Will define this function next
-                  className={`w-full py-2 px-4 rounded text-white font-medium ${
-                    isRoutingMode ? 'bg-red-500 hover:bg-red-600' : 'bg-green-500 hover:bg-green-600'
-                  }`}
-                >
-                  {isRoutingMode ? `Stop Selecting Points (${routingPoints.length} selected)` : 'Select Route Points'}
-                </button>
-                {routingPoints.length >= 2 && (
-                  <button
-                    onClick={calculateAndDrawMultiStopRoute} // Will define this function
-                    className="w-full py-2 px-4 rounded bg-blue-600 hover:bg-blue-700 text-white font-medium"
-                  >
-                    Calculate Route
-                  </button>
-                )}
-                {routingPoints.length > 0 && (
-                  <button
-                    onClick={clearRoutingData} // Will define this function
-                    className="w-full py-2 px-4 rounded bg-gray-500 hover:bg-gray-600 text-white font-medium"
-                  >
-                    Clear Selected Points
-                  </button>
-                )}
-                {multiStopRouteDetails && (
-                  <div className="mt-3 pt-3 border-t border-gray-200 text-sm">
-                    <p className="font-medium text-gray-700">Route Calculated:</p>
-                    <p className="text-gray-600">Total Distance: {(multiStopRouteDetails.distance / 1000).toFixed(2)} km</p>
-                    <p className="text-gray-600">Total Duration: {formatDuration(multiStopRouteDetails.duration)}</p> {/* Will define formatDuration */}
+            <div className="w-full md:w-64">
+              <div className="space-y-4">
+                {/* Day selector */}
+                <div className="bg-white rounded-lg p-4 shadow-sm">
+                  <h3 className="font-semibold text-gray-800 mb-2">Select Day</h3>
+                  <div className="flex flex-wrap gap-2">
+                    {Array.from({ length: tripDetails?.numberOfDays || 3 }).map((_, index) => (
+                      <button
+                        key={index}
+                        className={`py-1 px-3 rounded-full text-sm ${
+                          selectedDay === index 
+                            ? 'bg-blue-600 text-white' 
+                            : 'bg-gray-100 text-gray-800 hover:bg-gray-200'
+                        }`}
+                        onClick={() => handleDayChange(index)}
+                      >
+                        Day {index + 1}
+                      </button>
+                    ))}
                   </div>
-                )}
-              </div>
-              
-              {/* Transportation options */}
-              <div className="bg-white rounded-lg p-4 shadow-sm">
-                <h3 className="font-semibold text-gray-800 mb-2" style={{color: "#1a202c"}}>Transportation</h3>
-                <div className="space-y-2">
-                  {Object.entries(transportColors).map(([type, color]) => (
-                    <div key={type} className="flex items-center" style={{color: "#2d3748"}}>
-                      <span className="capitalize">{type}</span>
-                      <span className="ml-auto w-8 h-2 rounded" style={{ backgroundColor: color }}></span>
+                </div>
+                
+                {/* Layer toggles */}
+                <div className="bg-white rounded-lg p-4 shadow-sm">
+                  <h3 className="font-semibold text-gray-800 mb-2">Map Layers</h3>
+                  <div className="space-y-2">
+                    <label className="flex items-center space-x-2 cursor-pointer text-gray-700">
+                      <input 
+                        type="checkbox" 
+                        checked={activeLayers.hotels} 
+                        onChange={() => toggleLayer('hotels')}
+                        className="rounded text-blue-600 focus:ring-blue-500"
+                      />
+                      <span>Hotels</span>
+                      <span className="ml-auto w-3 h-3 rounded-full" style={{ backgroundColor: markerTypes.hotel.color }}></span>
+                    </label>
+                    
+                    <label className="flex items-center space-x-2 cursor-pointer text-gray-700">
+                      <input 
+                        type="checkbox" 
+                        checked={activeLayers.restaurants} 
+                        onChange={() => toggleLayer('restaurants')}
+                        className="rounded text-blue-600 focus:ring-blue-500"
+                      />
+                      <span>Restaurants</span>
+                      <span className="ml-auto w-3 h-3 rounded-full" style={{ backgroundColor: markerTypes.restaurant.color }}></span>
+                    </label>
+                    
+                    <label className="flex items-center space-x-2 cursor-pointer text-gray-700">
+                      <input 
+                        type="checkbox" 
+                        checked={activeLayers.activities} 
+                        onChange={() => toggleLayer('activities')}
+                        className="rounded text-blue-600 focus:ring-blue-500"
+                      />
+                      <span>Activities</span>
+                      <span className="ml-auto w-3 h-3 rounded-full" style={{ backgroundColor: markerTypes.activity.color }}></span>
+                    </label>
+                    
+                    <label className="flex items-center space-x-2 cursor-pointer text-gray-700">
+                      <input 
+                        type="checkbox" 
+                        checked={activeLayers.transport} 
+                        onChange={() => toggleLayer('transport')}
+                        className="rounded text-blue-600 focus:ring-blue-500"
+                      />
+                      <span>Transport</span>
+                      <span className="ml-auto w-3 h-3 rounded-full" style={{ backgroundColor: markerTypes.transport.color }}></span>
+                    </label>
+                  </div>
+                </div>
+                
+                {/* Suggestion button */}
+                <button
+                  onClick={handleSuggestNearby}
+                  className={`w-full py-2 px-4 rounded ${
+                    showSuggestionsPanel 
+                      ? 'bg-blue-700 text-white' 
+                      : 'bg-blue-600 hover:bg-blue-700 text-white'
+                  }`}
+                  style={{fontWeight: 600}}
+                >
+                  {showSuggestionsPanel ? 'Hide Suggestions' : 'Suggest Nearby'}
+                </button>
+                
+                {/* Multi-stop Routing Controls */}
+                <div className="bg-white rounded-lg p-4 shadow-sm space-y-3">
+                  <h3 className="font-semibold text-gray-800 mb-1">Multi-Stop Route</h3>
+                  <button
+                    onClick={toggleRoutingMode}
+                    className={`w-full py-2 px-4 rounded text-white font-medium ${
+                      isRoutingMode ? 'bg-red-500 hover:bg-red-600' : 'bg-green-500 hover:bg-green-600'
+                    }`}
+                  >
+                    {isRoutingMode ? `Stop Selecting Points (${routingPoints.length} selected)` : 'Select Route Points'}
+                  </button>
+                  
+                  {/* Transportation mode selector */}
+                  <div className="mt-2">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Transportation Mode:</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      {Object.entries(transportColors).map(([mode, color]) => (
+                        <button
+                          key={mode}
+                          onClick={() => setTransportMode(mode)}
+                          className={`py-1 px-2 rounded text-xs font-medium flex items-center justify-center ${
+                            transportMode === mode 
+                              ? 'bg-gray-700 text-white' 
+                              : 'bg-gray-100 text-gray-800 hover:bg-gray-200'
+                          }`}
+                        >
+                          <span 
+                            className="inline-block w-2 h-2 rounded-full mr-1"
+                            style={{ backgroundColor: color }}
+                          ></span>
+                          <span className="capitalize">{mode}</span>
+                        </button>
+                      ))}
                     </div>
-                  ))}
+                  </div>
+                  
+                  {routingPoints.length >= 2 && (
+                    <button
+                      onClick={calculateAndDrawMultiStopRoute}
+                      className="w-full py-2 px-4 rounded bg-blue-600 hover:bg-blue-700 text-white font-medium"
+                    >
+                      Calculate Route
+                    </button>
+                  )}
+                  {routingPoints.length > 0 && (
+                    <button
+                      onClick={clearRoutingData}
+                      className="w-full py-2 px-4 rounded bg-gray-500 hover:bg-gray-600 text-white font-medium"
+                    >
+                      Clear Selected Points
+                    </button>
+                  )}
+                  {multiStopRouteDetails && (
+                    <div className="mt-3 pt-3 border-t border-gray-200 text-sm">
+                      <p className="font-medium text-gray-700">Route Calculated:</p>
+                      <p className="text-gray-600">Mode: <span className="capitalize">{multiStopRouteDetails.mode || transportMode}</span></p>
+                      <p className="text-gray-600">Total Distance: {(multiStopRouteDetails.distance / 1000).toFixed(2)} km</p>
+                      <p className="text-gray-600">Total Duration: {formatDuration(multiStopRouteDetails.duration)}</p>
+                    </div>
+                  )}
+                </div>
+                
+                {/* Transportation options */}
+                <div className="bg-white rounded-lg p-4 shadow-sm">
+                  <h3 className="font-semibold text-gray-800 mb-2">Transportation</h3>
+                  <div className="space-y-2">
+                    {Object.entries(transportColors).map(([type, color]) => (
+                      <div key={type} className="flex items-center text-gray-700">
+                        <span className="capitalize">{type}</span>
+                        <span className="ml-auto w-8 h-2 rounded" style={{ backgroundColor: color }}></span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
             </div>
@@ -2947,6 +3809,192 @@ export default function MapsView({ tripDetails, onAddEvent }) {
           </div>
         )}
       </div>
+      
+      {/* Event Details Modal */}
+      {isEventModalOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-bold text-gray-800">Add to Calendar</h3>
+              <button 
+                onClick={() => setIsEventModalOpen(false)}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            
+            <div className="space-y-4">
+              <div>
+                <label htmlFor="event-name" className="block text-sm font-medium text-gray-700 mb-1">Name</label>
+                <input
+                  id="event-name"
+                  type="text"
+                  value={eventDetails.name}
+                  onChange={(e) => setEventDetails({...eventDetails, name: e.target.value})}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-900"
+                />
+              </div>
+              
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label htmlFor="event-day" className="block text-sm font-medium text-gray-700 mb-1">Day</label>
+                  <select
+                    id="event-day"
+                    value={eventDetails.day}
+                    onChange={(e) => setEventDetails({...eventDetails, day: Number(e.target.value)})}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-900"
+                  >
+                    {Array.from({ length: tripDetails?.numberOfDays || 7 }).map((_, index) => (
+                      <option key={index} value={index}>Day {index + 1}</option>
+                    ))}
+                  </select>
+                </div>
+                
+                <div>
+                  <label htmlFor="event-type" className="block text-sm font-medium text-gray-700 mb-1">Type</label>
+                  <select
+                    id="event-type"
+                    value={eventDetails.type}
+                    onChange={(e) => setEventDetails({...eventDetails, type: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-900"
+                  >
+                    <option value="activity">Activity</option>
+                    <option value="restaurant">Restaurant</option>
+                    <option value="hotel">Hotel</option>
+                    <option value="transport">Transport</option>
+                  </select>
+                </div>
+              </div>
+              
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label htmlFor="event-time" className="block text-sm font-medium text-gray-700 mb-1">Start Time</label>
+                  <select
+                    id="event-time"
+                    value={eventDetails.startTime}
+                    onChange={(e) => setEventDetails({...eventDetails, startTime: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-900"
+                  >
+                    {Array.from({ length: 24 }).map((_, hour) => (
+                      <option key={hour} value={`${hour.toString().padStart(2, '0')}:00`}>
+                        {hour.toString().padStart(2, '0')}:00
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                
+                <div>
+                  <label htmlFor="event-duration" className="block text-sm font-medium text-gray-700 mb-1">Duration (min)</label>
+                  <select
+                    id="event-duration"
+                    value={eventDetails.duration}
+                    onChange={(e) => setEventDetails({...eventDetails, duration: Number(e.target.value)})}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-900"
+                  >
+                    <option value="30">30 min</option>
+                    <option value="60">1 hour</option>
+                    <option value="90">1.5 hours</option>
+                    <option value="120">2 hours</option>
+                    <option value="180">3 hours</option>
+                    <option value="240">4 hours</option>
+                  </select>
+                </div>
+              </div>
+              
+              <div>
+                <label htmlFor="event-location" className="block text-sm font-medium text-gray-700 mb-1">Location</label>
+                <input
+                  id="event-location"
+                  type="text"
+                  value={eventDetails.location}
+                  onChange={(e) => setEventDetails({...eventDetails, location: e.target.value})}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-900"
+                />
+              </div>
+              
+              <div className="flex justify-end mt-6 pt-4 border-t border-gray-200">
+                <button
+                  type="button"
+                  onClick={() => setIsEventModalOpen(false)}
+                  className="px-4 py-2 bg-gray-200 text-gray-800 rounded-md mr-2 hover:bg-gray-300"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleAddEventSubmit}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                >
+                  Add to Calendar
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {/* Search results */}
+      {showSearchResults && searchResults.length > 0 && (
+        <div className="search-results">
+          <div className="p-2 bg-blue-50 border-b border-blue-200 flex justify-between items-center">
+            <span className="text-sm font-medium text-blue-700">
+              {searchResults.length} results found
+            </span>
+            <button 
+              onClick={() => setShowSearchResults(false)}
+              className="text-gray-500 hover:text-gray-700"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+              </svg>
+            </button>
+          </div>
+          <div className="max-h-64 overflow-y-auto">
+            {searchResults.map(result => (
+              <div key={result.id} className="search-result-item hover:bg-gray-50 p-3">
+                <div className="flex justify-between items-start">
+                  <div>
+                    <h3 className="font-medium text-gray-900">{result.name}</h3>
+                    {result.vicinity && (
+                      <p className="text-sm text-gray-600 mt-1">{result.vicinity}</p>
+                    )}
+                  </div>
+                  <div className="flex flex-col items-end">
+                    <span className={`inline-block px-2 py-1 text-xs rounded-full ${
+                      result.type === 'hotel' ? 'bg-blue-100 text-blue-800' :
+                      result.type === 'restaurant' ? 'bg-orange-100 text-orange-800' :
+                      result.type === 'activity' ? 'bg-green-100 text-green-800' :
+                      'bg-gray-100 text-gray-800'
+                    }`}>
+                      {result.type}
+                    </span>
+                    
+                    {result.rating > 0 && (
+                      <div className="flex items-center mt-1">
+                        <span className="text-yellow-500 mr-1">★</span>
+                        <span className="text-sm text-gray-600">{result.rating}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+                
+                {/* Add to calendar button */}
+                <div className="mt-3">
+                  <button 
+                    onClick={() => handleAddSearchResultToCalendar(result)}
+                    className="w-full py-2 px-4 bg-blue-600 text-white text-sm font-medium rounded hover:bg-blue-700"
+                  >
+                    Add to Calendar
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 } 
