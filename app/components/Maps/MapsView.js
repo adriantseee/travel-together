@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo, forwardRef, useImperativeHandle } from 'react';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { supabase } from '../../lib/supabase';
@@ -364,7 +364,8 @@ const renderBasicCanvasMap = (container, center) => {
   }
 };
 
-export default function MapsView({ tripDetails, onAddEvent }) {
+// Wrap the component with forwardRef
+export default forwardRef(function MapsView({ tripDetails, onAddEvent }, ref) {
   // State variables
   const [isLoading, setIsLoading] = useState(true);
   const [selectedDay, setSelectedDay] = useState(0);
@@ -3272,6 +3273,250 @@ export default function MapsView({ tripDetails, onAddEvent }) {
     }
   }, [selectedSearchResult, handleAddSearchResultToCalendar]);
 
+  // Add useImperativeHandle to expose methods to parent components
+  useImperativeHandle(ref, () => ({
+    navigateToPlace: async (place) => {
+      if (!map.current) {
+        console.error('Map not initialized');
+        return;
+      }
+      
+      console.log('Navigating to place:', place);
+      
+      try {
+        // Show loading indicator while searching
+        const loadingEl = document.createElement('div');
+        loadingEl.className = 'loading-indicator';
+        loadingEl.textContent = `Finding ${place.name}...`;
+        loadingEl.style.position = 'absolute';
+        loadingEl.style.top = '50%';
+        loadingEl.style.left = '50%';
+        loadingEl.style.transform = 'translate(-50%, -50%)';
+        loadingEl.style.backgroundColor = 'rgba(0,0,0,0.7)';
+        loadingEl.style.color = 'white';
+        loadingEl.style.padding = '10px 15px';
+        loadingEl.style.borderRadius = '4px';
+        loadingEl.style.zIndex = '999';
+        
+        if (mapContainer.current) {
+          mapContainer.current.appendChild(loadingEl);
+        }
+        
+        try {
+          // Always use the search API to get fresh data with photos
+          const response = await fetch(`/api/places/search?query=${encodeURIComponent(place.name)}&city=${encodeURIComponent(tripDetails?.city || '')}`);
+          
+          if (!response.ok) {
+            throw new Error(`Failed to search for place: ${response.statusText}`);
+          }
+          
+          const data = await response.json();
+          
+          if (data.results && data.results.length > 0) {
+            const placeResult = data.results[0];
+            
+            // Update the place object with search results
+            place.location = placeResult.location || place.location;
+            place.address = placeResult.address || place.address;
+            place.photoUrl = placeResult.photoUrl;
+            
+            // Navigate to the found place
+            map.current.flyTo({
+              center: [placeResult.location.longitude, placeResult.location.latitude],
+              zoom: 15,
+              essential: true
+            });
+            
+            // Add a marker with better styling
+            const markerEl = document.createElement('div');
+            markerEl.className = 'chat-location-marker';
+            markerEl.style.backgroundColor = '#3b82f6';
+            markerEl.style.width = '20px';
+            markerEl.style.height = '20px';
+            markerEl.style.borderRadius = '50%';
+            markerEl.style.border = '2px solid white';
+            markerEl.style.boxShadow = '0 2px 4px rgba(0,0,0,0.3)';
+            
+            const marker = new mapboxgl.Marker({
+              element: markerEl,
+              draggable: false
+            })
+              .setLngLat([placeResult.location.longitude, placeResult.location.latitude])
+              .setPopup(
+                new mapboxgl.Popup({
+                  offset: 25,
+                  closeButton: true,
+                  maxWidth: '300px'
+                }).setHTML(`
+                  <div style="min-width: 200px; max-width: 300px;">
+                    <h3 style="font-weight: 600; font-size: 14px; margin-bottom: 5px;">${place.name}</h3>
+                    ${placeResult.photoUrl ? `
+                      <div style="width: 100%; height: 120px; margin-bottom: 8px; overflow: hidden; border-radius: 4px; background-color: #f0f0f0;">
+                        <img 
+                          src="${placeResult.photoUrl}" 
+                          style="width: 100%; height: 100%; object-fit: cover;"
+                          alt="${place.name}"
+                          onerror="this.onerror=null; this.parentNode.innerHTML='<div style=\\'display:flex; align-items:center; justify-content:center; height:100%; color:#666;\\'>No image available</div>';" 
+                        />
+                      </div>
+                    ` : ''}
+                    <p style="font-size: 12px; color: #666; margin-bottom: 8px;">${placeResult.address || ''}</p>
+                    <button id="add-from-chat-btn" style="width: 100%; background-color: #3b82f6; color: white; border: none; padding: 6px; border-radius: 4px; margin-top: 4px; cursor: pointer; font-size: 12px;">Add to Itinerary</button>
+                  </div>
+                `)
+              )
+              .addTo(map.current);
+              
+            // Open the popup
+            marker.togglePopup();
+            
+            // Add event listener for the add button
+            setTimeout(() => {
+              const addButton = document.getElementById('add-from-chat-btn');
+              if (addButton) {
+                addButton.addEventListener('click', () => {
+                  if (onAddEvent) {
+                    onAddEvent({
+                      name: place.name,
+                      address: placeResult.address || '',
+                      description: `Visit ${place.name}`,
+                      coordinates: {
+                        latitude: placeResult.location.latitude,
+                        longitude: placeResult.location.longitude
+                      },
+                      category: 'Attraction'
+                    });
+                    marker.togglePopup(); // Close the popup
+                  }
+                });
+              }
+            }, 100);
+          } else {
+            // If no places found, try a more generic search
+            console.log('No specific results found, trying a more generic search');
+            
+            const genericQuery = `${place.name} in ${tripDetails?.city || ''}`;
+            const genericResponse = await fetch(`/api/places/search?query=${encodeURIComponent(genericQuery)}`);
+            
+            if (!genericResponse.ok) {
+              throw new Error(`Failed to search for place: ${genericResponse.statusText}`);
+            }
+            
+            const genericData = await genericResponse.json();
+            
+            if (genericData.results && genericData.results.length > 0) {
+              // Use the first generic result
+              const genericResult = genericData.results[0];
+              
+              // Update the place object with search results
+              place.location = genericResult.location;
+              place.address = genericResult.address;
+              place.photoUrl = genericResult.photoUrl;
+              
+              // Navigate to the found place
+              map.current.flyTo({
+                center: [genericResult.location.longitude, genericResult.location.latitude],
+                zoom: 15,
+                essential: true
+              });
+              
+              // Add a marker
+              const markerEl = document.createElement('div');
+              markerEl.className = 'chat-location-marker';
+              markerEl.style.backgroundColor = '#3b82f6';
+              markerEl.style.width = '20px';
+              markerEl.style.height = '20px';
+              markerEl.style.borderRadius = '50%';
+              markerEl.style.border = '2px solid white';
+              markerEl.style.boxShadow = '0 2px 4px rgba(0,0,0,0.3)';
+              
+              const marker = new mapboxgl.Marker({
+                element: markerEl,
+                draggable: false
+              })
+                .setLngLat([genericResult.location.longitude, genericResult.location.latitude])
+                .setPopup(
+                  new mapboxgl.Popup({
+                    offset: 25,
+                    closeButton: true,
+                    maxWidth: '300px'
+                  }).setHTML(`
+                    <div style="min-width: 200px; max-width: 300px;">
+                      <h3 style="font-weight: 600; font-size: 14px; margin-bottom: 5px;">${place.name}</h3>
+                      ${genericResult.photoUrl ? `
+                        <div style="width: 100%; height: 120px; margin-bottom: 8px; overflow: hidden; border-radius: 4px; background-color: #f0f0f0;">
+                          <img 
+                            src="${genericResult.photoUrl}" 
+                            style="width: 100%; height: 100%; object-fit: cover;"
+                            alt="${place.name}"
+                            onerror="this.onerror=null; this.parentNode.innerHTML='<div style=\\'display:flex; align-items:center; justify-content:center; height:100%; color:#666;\\'>No image available</div>';" 
+                          />
+                        </div>
+                      ` : ''}
+                      <p style="font-size: 12px; color: #666; margin-bottom: 8px;">${genericResult.address || ''}</p>
+                      <button id="add-from-chat-btn" style="width: 100%; background-color: #3b82f6; color: white; border: none; padding: 6px; border-radius: 4px; margin-top: 4px; cursor: pointer; font-size: 12px;">Add to Itinerary</button>
+                    </div>
+                  `)
+                )
+                .addTo(map.current);
+                
+              // Open the popup
+              marker.togglePopup();
+              
+              // Add event listener for the add button
+              setTimeout(() => {
+                const addButton = document.getElementById('add-from-chat-btn');
+                if (addButton) {
+                  addButton.addEventListener('click', () => {
+                    if (onAddEvent) {
+                      onAddEvent({
+                        name: place.name,
+                        address: genericResult.address || '',
+                        description: `Visit ${place.name}`,
+                        coordinates: {
+                          latitude: genericResult.location.latitude,
+                          longitude: genericResult.location.longitude
+                        },
+                        category: 'Attraction'
+                      });
+                      marker.togglePopup(); // Close the popup
+                    }
+                  });
+                }
+              }, 100);
+            } else {
+              // If still no results, just show the city center
+              console.error('No results found for place:', place.name);
+              alert(`Couldn't find specific details for ${place.name}. Showing the destination city instead.`);
+              
+              // Fly to city center
+              const cityCenter = {
+                lng: Number(tripDetails?.longitude) || defaultCoords.lng,
+                lat: Number(tripDetails?.latitude) || defaultCoords.lat
+              };
+              
+              map.current.flyTo({
+                center: [cityCenter.lng, cityCenter.lat],
+                zoom: 12,
+                essential: true
+              });
+            }
+          }
+        } catch (error) {
+          console.error('Error searching for place:', error);
+          alert(`Error finding ${place.name} on the map.`);
+        } finally {
+          // Remove loading indicator
+          if (loadingEl && loadingEl.parentNode) {
+            loadingEl.parentNode.removeChild(loadingEl);
+          }
+        }
+      } catch (err) {
+        console.error('Error navigating to place:', err);
+      }
+    }
+  }));
+
   return (
     <div className="h-full w-full flex flex-col bg-white overflow-auto">
       <style>
@@ -3997,4 +4242,4 @@ export default function MapsView({ tripDetails, onAddEvent }) {
       )}
     </div>
   );
-} 
+}); 

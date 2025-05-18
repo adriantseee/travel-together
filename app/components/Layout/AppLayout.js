@@ -10,6 +10,7 @@ export default function AppLayout({ initialData, currentUser, onShareStatusChang
   const [activeScreen, setActiveScreen] = useState('itinerary');
   // Use useRef instead of useState for the calendar reference
   const calendarRef = useRef(null);
+  const mapsRef = useRef(null);
   
   // Handle changing between screens - wrapped in useCallback
   const handleScreenChange = useCallback((screenId) => {
@@ -24,6 +25,41 @@ export default function AppLayout({ initialData, currentUser, onShareStatusChang
       console.warn('Calendar reference or method not available');
     }
   }, []);
+
+  // Handle adding events from assistant chat - wrapped in useCallback
+  const handleAddEventFromChat = useCallback((eventData) => {
+    // Convert chat event format to calendar event format
+    const calendarEvent = {
+      title: eventData.name,
+      location: eventData.address,
+      description: eventData.description,
+      // Add any other fields your calendar component requires
+      latitude: eventData.coordinates?.latitude,
+      longitude: eventData.coordinates?.longitude,
+      category: eventData.category
+    };
+    
+    // Use the same method as maps to add to calendar
+    handleAddEventFromMap(calendarEvent);
+  }, [handleAddEventFromMap]);
+  
+  // New function to navigate to a location on the map
+  const navigateToMapLocation = useCallback((place) => {
+    // First, switch to the maps view
+    setActiveScreen('maps');
+    
+    // If we have a place name but no coordinates, we need to search for it
+    // using the Google Places API
+    
+    // Delay the navigation slightly to allow the maps component to render
+    setTimeout(() => {
+      if (mapsRef.current && mapsRef.current.navigateToPlace) {
+        mapsRef.current.navigateToPlace(place);
+      } else {
+        console.warn('Maps reference or navigation method not available');
+      }
+    }, 300);
+  }, []);
   
   // Render the active screen component - wrapped in useCallback
   const renderActiveScreen = useCallback(() => {
@@ -37,6 +73,7 @@ export default function AppLayout({ initialData, currentUser, onShareStatusChang
           country: initialData?.country
         });
         return <MapsView 
+          ref={mapsRef}
           tripDetails={initialData} 
           onAddEvent={handleAddEventFromMap} 
         />;
@@ -60,7 +97,11 @@ export default function AppLayout({ initialData, currentUser, onShareStatusChang
       <div className="flex-1 overflow-hidden">
         {renderActiveScreen()}
       </div>
-      <FloatingChatButton />
+      <FloatingChatButton 
+        onAddEvent={handleAddEventFromChat} 
+        tripDetails={initialData}
+        navigateToMapLocation={navigateToMapLocation}
+      />
     </div>
   );
 } 

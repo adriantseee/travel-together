@@ -206,50 +206,167 @@ const AnimatedCircle = ({ isGenerating = false, isClicked = false }) => {
   );
 };
 
-const FloatingChatButton = () => {
+const FloatingChatButton = ({ onAddEvent, tripDetails, navigateToMapLocation }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [isClicked, setIsClicked] = useState(false);
+  const [isClicked, setIsClicked] = useState(true); // Always use the special squiggle animation
   const [message, setMessage] = useState('');
-  const [messages, setMessages] = useState([
-    { id: 1, text: "Hi there! How can I help with your travel plans?", isUser: false }
-  ]);
+  const [messages, setMessages] = useState([]);
+  const [chatHistory, setChatHistory] = useState([]);
+  const messagesEndRef = useRef(null);
+
+  // Initialize welcome message with trip context if available
+  useEffect(() => {
+    let welcomeMessage = "Hi there! I'm your travel assistant. Ask me about places to visit or things to do";
+    
+    if (tripDetails?.city) {
+      welcomeMessage += ` in ${tripDetails.city}`;
+      if (tripDetails?.country) {
+        welcomeMessage += `, ${tripDetails.country}`;
+      }
+    }
+    
+    welcomeMessage += ", and I'll suggest some great options!";
+    
+    setMessages([
+      { id: 1, text: welcomeMessage, isUser: false }
+    ]);
+  }, [tripDetails]);
+
+  // Scroll to bottom of messages whenever messages change
+  useEffect(() => {
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [messages]);
 
   const toggleChat = () => {
-    // Start squiggle animation
-    setIsClicked(true);
-    
-    // After a short delay, open the chat and reset clicked state
-    setTimeout(() => {
-      setIsOpen(!isOpen);
-      setIsClicked(false);
-    }, 500);
+    setIsOpen(!isOpen);
   };
 
-  const handleSendMessage = () => {
+  const handleViewOnMap = (place) => {
+    if (navigateToMapLocation) {
+      navigateToMapLocation(place);
+      // Optionally close chat
+      setIsOpen(false);
+    } else {
+      console.warn("No navigateToMapLocation handler provided");
+      alert(`Showing "${place.name}" on the map!`);
+    }
+  };
+
+  const handleSendMessage = async () => {
     if (message.trim() === '') return;
     
-    // Add user message
-    const newUserMessage = { id: Date.now(), text: message, isUser: true };
-    setMessages([...messages, newUserMessage]);
-    setMessage('');
+    // Add user message to UI
+    const userMessageId = Date.now();
+    const userMessage = { id: userMessageId, text: message, isUser: true };
+    setMessages(prevMessages => [...prevMessages, userMessage]);
     
-    // Simulate assistant response with animation
+    // Add to chat history for API
+    const newChatHistory = [
+      ...chatHistory,
+      { role: "user", content: message }
+    ];
+    setChatHistory(newChatHistory);
+    
+    // Clear input and set generating state
+    setMessage('');
     setIsGenerating(true);
     
-    setTimeout(() => {
-      const response = { 
-        id: Date.now() + 1, 
-        text: "I'm your travel assistant. I can help you plan your trip, find attractions, or answer questions about your destination.", 
-        isUser: false 
-      };
-      setMessages(prev => [...prev, response]);
+    try {
+      // Create a temporary message for streaming response
+      const assistantMessageId = Date.now() + 1;
+      setMessages(prevMessages => [
+        ...prevMessages, 
+        { id: assistantMessageId, text: "", isUser: false, isLoading: true }
+      ]);
+
+      // Call the get-locations API with trip details
+      const response = await fetch("/api/get-locations", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          message: message,
+          tripDetails: tripDetails || {},
+          tripId: tripDetails?.id
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`API returned status ${response.status}: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      
+      // Process and display the response
+      let formattedResponse = "";
+      
+      // Check if we received place data or just queries
+      if (data.queries && typeof data.queries === 'object' && !Array.isArray(data.queries)) {
+        // We received a placeList object with query -> places mapping
+        const placeList = data.queries;
+        formattedResponse = "Here are some places you might be interested in:\n\n";
+        
+        Object.entries(placeList).forEach(([query, places]) => {
+          formattedResponse += `For "${query}":\n${places}\n\n`;
+        });
+        
+        if (Object.keys(placeList).length === 0) {
+          formattedResponse = "I couldn't find any specific locations based on your request. Could you try asking in a different way?";
+        }
+      } else if (data.queries && Array.isArray(data.queries)) {
+        // We just got query strings back
+        formattedResponse = `Here are some interesting things to check out:\n\n${data.queries.join("\n")}`;
+        
+        if (data.queries.length === 0) {
+          formattedResponse = "I couldn't find any results based on your request. Could you try asking in a different way?";
+        }
+      } else {
+        formattedResponse = "I'm sorry, but I couldn't find any information based on your request. Please try asking in a different way.";
+      }
+      
+      // Update chat history with assistant response
+      setChatHistory(prev => [
+        ...prev,
+        { role: "assistant", content: formattedResponse }
+      ]);
+      
+      // Update the message with full content
+      setMessages(prevMessages => {
+        const newMessages = [...prevMessages];
+        const lastMessage = newMessages.find(msg => msg.id === assistantMessageId);
+        if (lastMessage) {
+          lastMessage.text = formattedResponse;
+          lastMessage.isLoading = false;
+        }
+        return newMessages;
+      });
+      
       setIsGenerating(false);
-    }, 2000);
+      
+    } catch (error) {
+      console.error("Error sending message:", error);
+      setMessages(prevMessages => {
+        const filtered = prevMessages.filter(msg => !msg.isLoading);
+        return [
+          ...filtered,
+          { 
+            id: Date.now() + 2, 
+            text: `Sorry, I encountered an error: ${error.message}. Please try again later.`, 
+            isUser: false 
+          }
+        ];
+      });
+      setIsGenerating(false);
+    }
   };
 
   const handleKeyPress = (e) => {
-    if (e.key === 'Enter') {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
       handleSendMessage();
     }
   };
@@ -269,46 +386,56 @@ const FloatingChatButton = () => {
             </button>
           </div>
           <div className="flex-1 p-4 overflow-y-auto bg-gray-50">
-            {messages.map(msg => (
-              <div 
-                key={msg.id} 
-                className={`mb-3 ${msg.isUser ? 'text-right' : ''}`}
-              >
+            {messages.map(msg => {
+              if (msg.isLoading) {
+                return (
+                  <div key={msg.id} className="mb-3">
+                    <div className="inline-block px-3 py-2 rounded-lg bg-gray-200 text-gray-800">
+                      <div className="flex items-center space-x-1">
+                        <div className="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
+                        <div className="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
+                        <div className="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: '600ms' }}></div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              }
+              
+              return (
                 <div 
-                  className={`inline-block px-3 py-2 rounded-lg 
-                    ${msg.isUser 
-                      ? 'bg-blue-600 text-white' 
-                      : 'bg-gray-200 text-gray-800'}`}
+                  key={msg.id} 
+                  className={`mb-3 ${msg.isUser ? 'text-right' : ''}`}
                 >
-                  {msg.text}
-                </div>
-              </div>
-            ))}
-            {(
-              <div className="mb-3">
-                <div className="inline-block px-3 py-2 rounded-lg bg-gray-200 text-gray-800">
-                  <div className="flex items-center space-x-1">
-                    <div className="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
-                    <div className="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
-                    <div className="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: '600ms' }}></div>
+                  <div 
+                    className={`inline-block px-3 py-2 rounded-lg max-w-[80%]
+                      ${msg.isUser 
+                        ? 'bg-blue-600 text-white' 
+                        : 'bg-gray-200 text-gray-800'}`}
+                  >
+                    {msg.text}
                   </div>
                 </div>
-              </div>
-            )}
+              );
+            })}
+            <div ref={messagesEndRef} />
           </div>
           <div className="p-3 border-t">
             <div className="flex">
-              <input
-                type="text"
+              <textarea
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
                 onKeyPress={handleKeyPress}
-                placeholder="Type a message..."
-                className="flex-1 border rounded-l-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="Ask about places to visit or things to do..."
+                className="flex-1 border rounded-l-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                rows="2"
+                disabled={isGenerating}
               />
               <button 
                 onClick={handleSendMessage}
-                className="bg-blue-600 text-white px-4 py-2 rounded-r-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                disabled={isGenerating || message.trim() === ''}
+                className={`bg-blue-600 text-white px-4 py-2 rounded-r-lg 
+                  ${isGenerating || message.trim() === '' ? 'opacity-50 cursor-not-allowed' : 'hover:bg-blue-700'} 
+                  focus:outline-none focus:ring-2 focus:ring-blue-500`}
               >
                 Send
               </button>
@@ -323,7 +450,7 @@ const FloatingChatButton = () => {
           aria-label="Open chat"
         >
           <div style={{ width: '4rem', height: '4rem' }}>
-            <AnimatedCircle isGenerating={false} isClicked={true} />
+            <AnimatedCircle isGenerating={isGenerating} isClicked={isClicked} />
           </div>
         </button>
       )}
