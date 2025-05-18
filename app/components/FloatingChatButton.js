@@ -217,6 +217,8 @@ const FloatingChatButton = ({ onAddEvent, tripDetails, navigateToMapLocation }) 
 
   // Initialize welcome message with trip context if available
   useEffect(() => {
+    console.log("Initializing welcome message, trip details:", !!tripDetails);
+    
     let welcomeMessage = "Hi there! I'm your travel assistant. Ask me about places to visit or things to do";
     
     if (tripDetails?.city) {
@@ -227,11 +229,40 @@ const FloatingChatButton = ({ onAddEvent, tripDetails, navigateToMapLocation }) 
     }
     
     welcomeMessage += ", and I'll suggest some great options!";
+    console.log("Welcome message created:", welcomeMessage);
     
-    setMessages([
-      { id: 1, text: welcomeMessage, isUser: false }
-    ]);
-  }, [tripDetails]);
+    // Use a unique ID and ensure the welcomeMessage doesn't replace existing messages
+    setMessages(prevMessages => {
+      console.log("Previous messages count:", prevMessages.length);
+      // Check if we already have messages - don't add welcome message again
+      if (prevMessages.length > 0) {
+        console.log("Messages already exist, keeping current messages");
+        return prevMessages;
+      }
+      console.log("No messages exist, adding welcome message");
+      return [{ id: 'welcome-' + Date.now(), text: welcomeMessage, isUser: false }];
+    });
+    
+    // Force initial render with welcome message
+    if (messages.length === 0) {
+      console.log("No messages in state, forcing welcome message directly");
+      setMessages([{ id: 'welcome-init-' + Date.now(), text: welcomeMessage, isUser: false }]);
+    }
+  }, [tripDetails, messages.length]);
+
+  // Log messages changes for debugging
+  useEffect(() => {
+    console.log("Messages updated, count:", messages.length);
+  }, [messages]);
+
+  // Force open the chat when a new trip is loaded
+  useEffect(() => {
+    if (tripDetails && !isOpen) {
+      console.log("New trip detected, opening chat automatically");
+      // Optional: automatically open chat when a new trip is loaded
+      // Uncomment to enable: setIsOpen(true);
+    }
+  }, [tripDetails, isOpen]);
 
   // Scroll to bottom of messages whenever messages change
   useEffect(() => {
@@ -246,12 +277,29 @@ const FloatingChatButton = ({ onAddEvent, tripDetails, navigateToMapLocation }) 
 
   const handleViewOnMap = (place) => {
     if (navigateToMapLocation) {
-      navigateToMapLocation(place);
+      // Ensure we're passing all the location data in the expected format
+      const locationData = {
+        id: place.id,
+        name: place.name,
+        location: place.location,
+        coordinates: place.location,  // For backward compatibility
+        address: place.formattedAddress,
+        formattedAddress: place.formattedAddress,  // Both formats for compatibility
+        rating: place.rating?.value || place.rating,
+        websiteUri: place.websiteUri,
+        phone: place.nationalPhoneNumber || place.internationalPhoneNumber,
+        priceLevel: place.priceLevel,
+        photos: place.photos,
+        types: place.types
+      };
+      
+      navigateToMapLocation(locationData);
+      
       // Optionally close chat
       setIsOpen(false);
     } else {
       console.warn("No navigateToMapLocation handler provided");
-      alert(`Showing "${place.name}" on the map!`);
+      alert(`No map navigation handler available for "${place.name}"`);
     }
   };
 
@@ -303,6 +351,7 @@ const FloatingChatButton = ({ onAddEvent, tripDetails, navigateToMapLocation }) 
       
       // Process and display the response
       let formattedResponse = "";
+      let locationsToShow = [];
       
       // Check if we received place data or just queries
       if (data.queries && typeof data.queries === 'object' && !Array.isArray(data.queries)) {
@@ -310,12 +359,65 @@ const FloatingChatButton = ({ onAddEvent, tripDetails, navigateToMapLocation }) 
         const placeList = data.queries;
         formattedResponse = "Here are some places you might be interested in:\n\n";
         
-        Object.entries(placeList).forEach(([query, places]) => {
-          formattedResponse += `For "${query}":\n${places}\n\n`;
+        // Process place data for display and mapping
+        Object.entries(placeList).forEach(([query, places], queryIndex) => {
+          // Format the query results for the chat message
+          formattedResponse += `**${query}**:\n`;
+          
+          // If places is a string (from older version), convert to array for consistency
+          if (typeof places === 'string') {
+            formattedResponse += places + "\n\n";
+          } else if (Array.isArray(places)) {
+            // Extract places for mapping and add clickable links in chat
+            places.forEach((place, index) => {
+              // Store place for map navigation
+              if (place && typeof place === 'object') {
+                // Generate ID for linking in the text
+                const placeId = `place-${queryIndex}-${index}`;
+                
+                // Add place with ID to our locations array
+                const placeToAdd = {
+                  id: placeId,
+                  name: place.displayName?.text || place.name || 'Unknown location',
+                  location: {
+                    latitude: place.location?.latitude,
+                    longitude: place.location?.longitude
+                  },
+                  formattedAddress: place.formattedAddress,
+                  rating: place.rating?.value,
+                  userRatingCount: place.rating?.userRatingCount,
+                  priceLevel: place.priceLevel,
+                  websiteUri: place.websiteUri,
+                  nationalPhoneNumber: place.nationalPhoneNumber,
+                  types: place.types,
+                  photos: place.photos,
+                  source: 'google'
+                };
+                
+                locationsToShow.push(placeToAdd);
+                
+                // Add clickable link in the text
+                formattedResponse += `• [${placeToAdd.name}](map:${placeId})\n`;
+                if (place.formattedAddress) {
+                  formattedResponse += `  ${place.formattedAddress}\n`;
+                }
+                if (place.rating?.value) {
+                  formattedResponse += `  Rating: ${place.rating.value}${place.rating.userRatingCount ? ` (${place.rating.userRatingCount} reviews)` : ''}\n`;
+                }
+                formattedResponse += '\n';
+              } else {
+                // Fallback for simple string entries
+                formattedResponse += `• ${place}\n`;
+              }
+            });
+          }
         });
         
         if (Object.keys(placeList).length === 0) {
           formattedResponse = "I couldn't find any specific locations based on your request. Could you try asking in a different way?";
+        } else {
+          // Add a note about clicking locations
+          formattedResponse += "\nYou can click on any location name to view it on the map.";
         }
       } else if (data.queries && Array.isArray(data.queries)) {
         // We just got query strings back
@@ -334,13 +436,14 @@ const FloatingChatButton = ({ onAddEvent, tripDetails, navigateToMapLocation }) 
         { role: "assistant", content: formattedResponse }
       ]);
       
-      // Update the message with full content
+      // Update the message with full content and store locations data
       setMessages(prevMessages => {
         const newMessages = [...prevMessages];
         const lastMessage = newMessages.find(msg => msg.id === assistantMessageId);
         if (lastMessage) {
           lastMessage.text = formattedResponse;
           lastMessage.isLoading = false;
+          lastMessage.locations = locationsToShow;
         }
         return newMessages;
       });
@@ -364,6 +467,69 @@ const FloatingChatButton = ({ onAddEvent, tripDetails, navigateToMapLocation }) 
     }
   };
 
+  // Enhanced handler to extract location ID and navigate to map
+  const handleMessageClick = (e) => {
+    // Check if we clicked on a link
+    const linkElement = e.target.closest('a');
+    if (!linkElement) return;
+    
+    // Check if it's a map link
+    const href = linkElement.getAttribute('href');
+    if (href && href.startsWith('map:')) {
+      e.preventDefault();
+      
+      // Extract the location ID from the link
+      const placeId = href.replace('map:', '');
+      
+      // Find the matching location in our messages
+      let locationToShow = null;
+      
+      // Loop through messages to find the location
+      messages.forEach(message => {
+        if (message.locations && message.locations.length > 0) {
+          const foundLocation = message.locations.find(loc => loc.id === placeId);
+          if (foundLocation) {
+            locationToShow = foundLocation;
+          }
+        }
+      });
+      
+      console.log("Found location to show:", locationToShow);
+      
+      if (locationToShow) {
+        handleViewOnMap(locationToShow);
+      }
+    }
+  };
+
+  // Function to convert markdown links to HTML
+  const formatMessageText = (text) => {
+    if (!text) return '';
+    
+    // First, escape HTML
+    let formattedText = text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+    
+    // Convert markdown style links [text](url) to HTML <a> tags
+    formattedText = formattedText.replace(
+      /\[([^\]]+)\]\(map:([^)]+)\)/g, 
+      '<a href="map:$2" class="text-blue-600 hover:underline font-medium">$1</a>'
+    );
+    
+    // Convert **bold** to <strong>
+    formattedText = formattedText.replace(
+      /\*\*([^*]+)\*\*/g,
+      '<strong class="font-bold">$1</strong>'
+    );
+    
+    // Convert line breaks to <br> tags
+    formattedText = formattedText.replace(/\n/g, '<br>');
+    
+    return formattedText;
+  };
+
   const handleKeyPress = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -373,6 +539,40 @@ const FloatingChatButton = ({ onAddEvent, tripDetails, navigateToMapLocation }) 
 
   return (
     <div className="fixed bottom-5 right-5 z-50">
+      <style jsx global>{`
+        /* Styles for message links */
+        .message-link {
+          color: #2563EB;
+          text-decoration: none;
+          font-weight: 500;
+          transition: color 0.2s ease;
+        }
+        
+        .message-link:hover {
+          text-decoration: underline;
+          color: #1D4ED8;
+        }
+        
+        /* Make the bot messages better */
+        .bot-message {
+          line-height: 1.5;
+        }
+        
+        .bot-message a {
+          color: #2563EB;
+          font-weight: 500;
+          text-decoration: none;
+        }
+        
+        .bot-message a:hover {
+          text-decoration: underline;
+        }
+        
+        .bot-message strong {
+          font-weight: 600;
+        }
+      `}</style>
+      
       {isOpen ? (
         <div className="bg-white rounded-lg shadow-xl w-96 h-[450px] flex flex-col">
           <div className="bg-blue-600 text-white p-3 rounded-t-lg flex justify-between items-center">
@@ -410,9 +610,11 @@ const FloatingChatButton = ({ onAddEvent, tripDetails, navigateToMapLocation }) 
                     className={`inline-block px-3 py-2 rounded-lg max-w-[80%]
                       ${msg.isUser 
                         ? 'bg-blue-600 text-white' 
-                        : 'bg-gray-200 text-gray-800'}`}
+                        : 'bg-gray-200 text-gray-800 bot-message'}`}
+                    onClick={handleMessageClick}
+                    dangerouslySetInnerHTML={msg.isUser ? null : { __html: formatMessageText(msg.text) }}
                   >
-                    {msg.text}
+                    {msg.isUser ? msg.text : null}
                   </div>
                 </div>
               );
