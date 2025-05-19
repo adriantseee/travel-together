@@ -72,11 +72,15 @@ export default function AppLayout({ initialData, currentUser, onShareStatusChang
           city: initialData?.city,
           country: initialData?.country
         });
-        return <MapsView 
-          ref={mapsRef}
-          tripDetails={initialData} 
-          onAddEvent={handleAddEventFromMap} 
-        />;
+        return (
+        <div>
+          <MapsView 
+            ref={mapsRef}
+            tripDetails={initialData} 
+            onAddEvent={handleAddEventFromMap} 
+          />
+        </div>
+        );
       case 'itinerary':
       default:
         return (

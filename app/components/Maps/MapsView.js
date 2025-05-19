@@ -231,9 +231,9 @@ const renderFallbackMap = (container, center) => {
     try {
       container.innerHTML = `
         <div style="padding: 20px; text-align: center;">
-          <h3>Map Unavailable</h3>
-          <p>We couldn't load any map due to technical issues.</p>
-          <p>Location: ${center.lat.toFixed(6)}, ${center.lng.toFixed(6)}</p>
+          <h3 style="color: #000000;">Map Unavailable</h3>
+          <p style="color: #000000;">We couldn't load any map due to technical issues.</p>
+          <p style="color: #000000;">Location: ${center.lat.toFixed(6)}, ${center.lng.toFixed(6)}</p>
         </div>
       `;
       return true;
@@ -356,9 +356,9 @@ const renderBasicCanvasMap = (container, center) => {
     // Last resort - text message
     container.innerHTML = `
       <div style="padding: 20px; text-align: center;">
-        <h3>Map Unavailable</h3>
-        <p>Sorry, we couldn't load any map. This may be due to network issues or browser compatibility.</p>
-        <p>Location: ${center.lat.toFixed(6)}, ${center.lng.toFixed(6)}</p>
+        <h3 style="color: #000000;">Map Unavailable</h3>
+        <p style="color: #000000;">Sorry, we couldn't load any map. This may be due to network issues or browser compatibility.</p>
+        <p style="color: #000000;">Location: ${center.lat.toFixed(6)}, ${center.lng.toFixed(6)}</p>
       </div>
     `;
   }
@@ -1403,10 +1403,10 @@ export default forwardRef(function MapsView({ tripDetails, onAddEvent }, ref) {
     
     // Open the modal with initial details
     setEventDetails({
-      name: attraction.name,
+      name: attraction.displayName?.text || attraction.name,
       startTime: '12:00',
       duration: 60,
-      location: attraction.vicinity || '',
+      location: attraction.vicinity || attraction.address || '',
       coordinates: {
         latitude: attraction.coordinates.lat,
         longitude: attraction.coordinates.lng
@@ -1475,6 +1475,9 @@ export default forwardRef(function MapsView({ tripDetails, onAddEvent }, ref) {
     
     const markerType = markerTypes[location.type] || markerTypes.activity;
     
+    // Get display name with fallback to name
+    const displayName = location.displayName?.text || location.name;
+    
     // Create marker element
     const markerEl = document.createElement('div');
     markerEl.className = 'marker';
@@ -1488,14 +1491,14 @@ export default forwardRef(function MapsView({ tripDetails, onAddEvent }, ref) {
     markerEl.style.color = 'white';
     markerEl.style.boxShadow = '0 2px 4px rgba(0,0,0,0.3)';
     markerEl.style.cursor = 'move';
-    markerEl.innerHTML = `<span>${location.name.charAt(0)}</span>`;
-    markerEl.title = location.name;
+    markerEl.innerHTML = `<span>${displayName.charAt(0)}</span>`;
+    markerEl.title = displayName;
     
     // Add tooltip on hover
     const popup = new mapboxgl.Popup({
       offset: 25,
       closeButton: false
-    }).setText(location.name);
+    }).setHTML(`<div style="color: #000000; font-weight: 500;">${displayName}</div>`);
     
     // Create and add marker to map
     const marker = new mapboxgl.Marker({
@@ -1747,29 +1750,46 @@ export default forwardRef(function MapsView({ tripDetails, onAddEvent }, ref) {
     // Enhanced popup HTML with more details
     let popupHtml = `
       <div class="place-popup" style="min-width: 200px; max-width: 300px;">
-        <strong style="display: block; margin-bottom: 5px; font-size: 16px; color: #1a202c;">${attraction.name}</strong>
+        <strong style="display: block; margin-bottom: 5px; font-size: 16px; color: #000000;">${attraction.name}</strong>
         <div style="display: flex; align-items: center; margin-bottom: 5px;">
           <span style="color: #f8b400;">${"★".repeat(Math.round(attraction.rating || 0))}</span>
           <span style="color: #ccc;">${"★".repeat(5 - Math.round(attraction.rating || 0))}</span>
-          <span style="margin-left: 5px; color: #4a5568; font-size: 14px;">${attraction.rating || 'Not rated'}</span>
+          <span style="margin-left: 5px; color: #000000; font-size: 14px;">${attraction.rating || 'Not rated'}</span>
         </div>
     `;
     
     // Add address if available
     if (attraction.vicinity) {
-      popupHtml += `<div style="margin-bottom: 5px; font-size: 14px; color: #2d3748;">${attraction.vicinity}</div>`;
+      popupHtml += `<div style="margin-bottom: 5px; font-size: 14px; color: #000000;">${attraction.vicinity}</div>`;
     }
     
     // Add price level if available (Google data)
     if (attraction.priceLevel !== undefined) {
       const priceText = "$".repeat(attraction.priceLevel);
-      popupHtml += `<div style="margin-bottom: 5px; color: #4a5568;">Price: ${priceText || 'N/A'}</div>`;
+      popupHtml += `<div style="margin-bottom: 5px; color: #000000;">Price: ${priceText || 'N/A'}</div>`;
     }
     
     // Add a photo if available
     if (attraction.photos && attraction.photos.length > 0) {
       const photoObj = attraction.photos[0];
-      const photoUrl = typeof photoObj === 'string' ? photoObj : photoObj.getUrl ? photoObj.getUrl() : null;
+      let photoUrl = null;
+      
+      // Handle different photo formats
+      if (typeof photoObj === 'string') {
+        photoUrl = photoObj;
+      } else if (photoObj.name) {
+        // Handle Google Places API v1 photo name format
+        const GOOGLE_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_API_KEY || '';
+        photoUrl = `https://places.googleapis.com/v1/${photoObj.name}/media?key=${GOOGLE_API_KEY}&maxHeightPx=400&maxWidthPx=400`;
+      } else if (photoObj.getUrl && typeof photoObj.getUrl === 'function') {
+        try {
+          photoUrl = photoObj.getUrl({ maxWidth: 400, maxHeight: 300 });
+        } catch (e) {
+          console.error('Error getting photo URL:', e);
+        }
+      } else if (photoObj) {
+        photoUrl = photoObj;
+      }
       
       console.log('Photo URL for popup:', {
         location: attraction.name,
@@ -1984,7 +2004,12 @@ export default forwardRef(function MapsView({ tripDetails, onAddEvent }, ref) {
                         if (typeof photo.getUrl === 'function') {
                           return photo.getUrl({ maxWidth: 400, maxHeight: 300 });
                         } 
-                        // Fall back to photo_reference if available
+                        // Handle Google Places API v1 photo name format
+                        else if (photo.name) {
+                          const GOOGLE_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_API_KEY || '';
+                          return `https://places.googleapis.com/v1/${photo.name}/media?key=${GOOGLE_API_KEY}&maxHeightPx=400&maxWidthPx=400`;
+                        }
+                        // Fall back to photo_reference if available (API v2)
                         else if (photo.photo_reference) {
                           return `https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photo_reference=${photo.photo_reference}&key=${GOOGLE_MAPS_API_KEY}`;
                         }
@@ -1999,6 +2024,7 @@ export default forwardRef(function MapsView({ tripDetails, onAddEvent }, ref) {
           return {
                     id: place.place_id,
                     name: place.name,
+                    displayName: { text: place.name }, // Add displayName property for consistency
                     type: determineLocationType(place.types[0] || 'activity'),
                     coordinates: { 
                       lat: place.geometry.location.lat(), 
@@ -2189,16 +2215,16 @@ export default forwardRef(function MapsView({ tripDetails, onAddEvent }, ref) {
       tempElement.style.minWidth = '200px';
       
       tempElement.innerHTML = `
-        <h3 class="text-sm font-bold mb-2">Add New Location</h3>
-        <input id="new-marker-name" type="text" placeholder="Location name" class="p-1 border border-gray-300 rounded w-full mb-2">
-        <select id="new-marker-type" class="p-1 border border-gray-300 rounded w-full mb-2">
+        <h3 class="text-sm font-bold mb-2" style="color: #000000;">Add New Location</h3>
+        <input id="new-marker-name" type="text" placeholder="Location name" class="p-1 border border-gray-300 rounded w-full mb-2 text-black">
+        <select id="new-marker-type" class="p-1 border border-gray-300 rounded w-full mb-2 text-black">
           <option value="activity">Activity</option>
           <option value="restaurant">Restaurant</option>
           <option value="hotel">Hotel</option>
           <option value="transport">Transport</option>
         </select>
         <div class="flex justify-between">
-          <button id="cancel-marker" class="px-2 py-1 bg-gray-200 rounded text-xs">Cancel</button>
+          <button id="cancel-marker" class="px-2 py-1 bg-gray-200 rounded text-xs text-black">Cancel</button>
           <button id="save-marker" class="px-2 py-1 bg-blue-500 text-white rounded text-xs">Add to Itinerary</button>
         </div>
       `;
@@ -2276,6 +2302,8 @@ export default forwardRef(function MapsView({ tripDetails, onAddEvent }, ref) {
       helpMsg.style.padding = '8px 12px';
       helpMsg.style.borderRadius = '4px';
       helpMsg.style.fontSize = '12px';
+      helpMsg.style.fontWeight = '500';
+      helpMsg.style.textShadow = '0px 1px 2px rgba(0,0,0,0.3)';
       helpMsg.textContent = 'Shift+Click on map to add a new location';
       
       // Add the help message to the map container
@@ -2907,7 +2935,12 @@ export default forwardRef(function MapsView({ tripDetails, onAddEvent }, ref) {
                       if (typeof photo.getUrl === 'function') {
                         return photo.getUrl({ maxWidth: 400, maxHeight: 300 });
                       } 
-                      // Fall back to photo_reference if available
+                      // Handle Google Places API v1 photo name format
+                      else if (photo.name) {
+                        const GOOGLE_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_API_KEY || '';
+                        return `https://places.googleapis.com/v1/${photo.name}/media?key=${GOOGLE_API_KEY}&maxHeightPx=400&maxWidthPx=400`;
+                      }
+                      // Fall back to photo_reference if available (API v2)
                       else if (photo.photo_reference) {
                         return `https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photo_reference=${photo.photo_reference}&key=${GOOGLE_MAPS_API_KEY}`;
                       }
@@ -2922,6 +2955,7 @@ export default forwardRef(function MapsView({ tripDetails, onAddEvent }, ref) {
                 return {
                   id: place.place_id,
                   name: place.name,
+                  displayName: { text: place.name }, // Add displayName property for consistency
                   type: determineLocationType(place.types ? place.types[0] : 'activity'),
                   coordinates: { 
                     lat: place.geometry.location.lat(), 
@@ -3033,24 +3067,43 @@ export default forwardRef(function MapsView({ tripDetails, onAddEvent }, ref) {
           // Add popup content for the marker
     let popupHtml = `
             <div class="place-popup" style="min-width: 200px; max-width: 300px;">
-              <strong style="display: block; margin-bottom: 5px; font-size: 16px; color: #1a202c;">${place.name}</strong>
+              <strong style="display: block; margin-bottom: 5px; font-size: 16px; color: #000000;">${place.name}</strong>
               ${place.rating ? `
         <div style="display: flex; align-items: center; margin-bottom: 5px;">
                   <span style="color: #f8b400;">${"★".repeat(Math.round(place.rating || 0))}</span>
                   <span style="color: #ccc;">${"★".repeat(5 - Math.round(place.rating || 0))}</span>
-                  <span style="margin-left: 5px; color: #4a5568; font-size: 14px;">${place.rating}</span>
+                  <span style="margin-left: 5px; color: #000000; font-size: 14px;">${place.rating}</span>
         </div>
               ` : ''}
     `;
     
     // Add address if available
           if (place.vicinity) {
-            popupHtml += `<div style="margin-bottom: 5px; font-size: 14px; color: #2d3748;">${place.vicinity}</div>`;
+            popupHtml += `<div style="margin-bottom: 5px; font-size: 14px; color: #000000;">${place.vicinity}</div>`;
           }
           
           // Add a photo if available
           if (place.photos && place.photos.length > 0) {
-            const photoUrl = place.photos[0];
+            const photoObj = place.photos[0];
+            let photoUrl = null;
+            
+            // Handle different photo formats
+            if (typeof photoObj === 'string') {
+              photoUrl = photoObj;
+            } else if (photoObj.name) {
+              // Handle Google Places API v1 photo name format
+              const GOOGLE_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_API_KEY || '';
+              photoUrl = `https://places.googleapis.com/v1/${photoObj.name}/media?key=${GOOGLE_API_KEY}&maxHeightPx=400&maxWidthPx=400`;
+            } else if (photoObj.getUrl && typeof photoObj.getUrl === 'function') {
+              try {
+                photoUrl = photoObj.getUrl({ maxWidth: 400, maxHeight: 300 });
+              } catch (e) {
+                console.error('Error getting photo URL:', e);
+              }
+            } else if (photoObj) {
+              photoUrl = photoObj;
+            }
+            
             if (photoUrl) {
               popupHtml += `
                 <div style="width: 100%; height: 120px; margin-bottom: 5px; position: relative; overflow: hidden; border-radius: 4px; background-color: #f0f0f0;">
@@ -3146,7 +3199,7 @@ export default forwardRef(function MapsView({ tripDetails, onAddEvent }, ref) {
     
     // Open the modal with initial details from the place
     setEventDetails({
-      name: place.name,
+      name: place.displayName?.text || place.name,
       startTime: searchTime,
       duration: searchDuration,
       location: place.vicinity || '',
@@ -3284,10 +3337,13 @@ export default forwardRef(function MapsView({ tripDetails, onAddEvent }, ref) {
       console.log('Navigating to place:', place);
       
       try {
-        // Show loading indicator while searching
+        // Get the display name with fallback to name
+        const placeName = place.displayName?.text || place.name || 'Unknown location';
+        
+        // Show loading indicator while processing
         const loadingEl = document.createElement('div');
         loadingEl.className = 'loading-indicator';
-        loadingEl.textContent = `Finding ${place.name}...`;
+        loadingEl.textContent = `Finding ${placeName}...`;
         loadingEl.style.position = 'absolute';
         loadingEl.style.top = '50%';
         loadingEl.style.left = '50%';
@@ -3302,217 +3358,203 @@ export default forwardRef(function MapsView({ tripDetails, onAddEvent }, ref) {
           mapContainer.current.appendChild(loadingEl);
         }
         
-        try {
-          // Always use the search API to get fresh data with photos
-          const response = await fetch(`/api/places/search?query=${encodeURIComponent(place.name)}&city=${encodeURIComponent(tripDetails?.city || '')}`);
-          
-          if (!response.ok) {
-            throw new Error(`Failed to search for place: ${response.statusText}`);
-          }
-          
-          const data = await response.json();
-          
-          if (data.results && data.results.length > 0) {
-            const placeResult = data.results[0];
-            
-            // Update the place object with search results
-            place.location = placeResult.location || place.location;
-            place.address = placeResult.address || place.address;
-            place.photoUrl = placeResult.photoUrl;
-            
-            // Navigate to the found place
-            map.current.flyTo({
-              center: [placeResult.location.longitude, placeResult.location.latitude],
-              zoom: 15,
-              essential: true
-            });
-            
-            // Add a marker with better styling
-            const markerEl = document.createElement('div');
-            markerEl.className = 'chat-location-marker';
-            markerEl.style.backgroundColor = '#3b82f6';
-            markerEl.style.width = '20px';
-            markerEl.style.height = '20px';
-            markerEl.style.borderRadius = '50%';
-            markerEl.style.border = '2px solid white';
-            markerEl.style.boxShadow = '0 2px 4px rgba(0,0,0,0.3)';
-            
-            const marker = new mapboxgl.Marker({
-              element: markerEl,
-              draggable: false
-            })
-              .setLngLat([placeResult.location.longitude, placeResult.location.latitude])
-              .setPopup(
-                new mapboxgl.Popup({
-                  offset: 25,
-                  closeButton: true,
-                  maxWidth: '300px'
-                }).setHTML(`
-                  <div style="min-width: 200px; max-width: 300px;">
-                    <h3 style="font-weight: 600; font-size: 14px; margin-bottom: 5px;">${place.name}</h3>
-                    ${placeResult.photoUrl ? `
-                      <div style="width: 100%; height: 120px; margin-bottom: 8px; overflow: hidden; border-radius: 4px; background-color: #f0f0f0;">
-                        <img 
-                          src="${placeResult.photoUrl}" 
-                          style="width: 100%; height: 100%; object-fit: cover;"
-                          alt="${place.name}"
-                          onerror="this.onerror=null; this.parentNode.innerHTML='<div style=\\'display:flex; align-items:center; justify-content:center; height:100%; color:#666;\\'>No image available</div>';" 
-                        />
-                      </div>
-                    ` : ''}
-                    <p style="font-size: 12px; color: #666; margin-bottom: 8px;">${placeResult.address || ''}</p>
-                    <button id="add-from-chat-btn" style="width: 100%; background-color: #3b82f6; color: white; border: none; padding: 6px; border-radius: 4px; margin-top: 4px; cursor: pointer; font-size: 12px;">Add to Itinerary</button>
-                  </div>
-                `)
-              )
-              .addTo(map.current);
-              
-            // Open the popup
-            marker.togglePopup();
-            
-            // Add event listener for the add button
-            setTimeout(() => {
-              const addButton = document.getElementById('add-from-chat-btn');
-              if (addButton) {
-                addButton.addEventListener('click', () => {
-                  if (onAddEvent) {
-                    onAddEvent({
-                      name: place.name,
-                      address: placeResult.address || '',
-                      description: `Visit ${place.name}`,
-                      coordinates: {
-                        latitude: placeResult.location.latitude,
-                        longitude: placeResult.location.longitude
-                      },
-                      category: 'Attraction'
-                    });
-                    marker.togglePopup(); // Close the popup
-                  }
-                });
-              }
-            }, 100);
-          } else {
-            // If no places found, try a more generic search
-            console.log('No specific results found, trying a more generic search');
-            
-            const genericQuery = `${place.name} in ${tripDetails?.city || ''}`;
-            const genericResponse = await fetch(`/api/places/search?query=${encodeURIComponent(genericQuery)}`);
-            
-            if (!genericResponse.ok) {
-              throw new Error(`Failed to search for place: ${genericResponse.statusText}`);
+        // Check if we already have coordinates in the place data
+        let hasValidCoordinates = false;
+        let latitude, longitude;
+        
+        if (place.location) {
+          latitude = place.location.latitude || place.location.lat;
+          longitude = place.location.longitude || place.location.lng;
+          hasValidCoordinates = !!latitude && !!longitude;
+        } else if (place.coordinates) {
+          latitude = place.coordinates.latitude || place.coordinates.lat;
+          longitude = place.coordinates.longitude || place.coordinates.lng;
+          hasValidCoordinates = !!latitude && !!longitude;
+        }
+        
+        // Format place address
+        const address = place.formattedAddress || place.address || '';
+        
+        // Get place photo URL - either direct URL or first from photos array
+        let photoUrl = null;
+        if (place.photos && place.photos.length > 0) {
+          // Check if the photo is already a string URL or an object
+          const firstPhoto = place.photos[0];
+          if (typeof firstPhoto === 'string') {
+            photoUrl = firstPhoto;
+          } else if (firstPhoto.name) {
+            // Handle Google Places API v1 photo name format
+            // Format: "places/{place_id}/photos/{photo_id}"
+            const GOOGLE_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_API_KEY || '';
+            photoUrl = `https://places.googleapis.com/v1/${firstPhoto.name}/media?key=${GOOGLE_API_KEY}&maxHeightPx=400&maxWidthPx=400`;
+          } else if (firstPhoto.getUrl && typeof firstPhoto.getUrl === 'function') {
+            try {
+              photoUrl = firstPhoto.getUrl({ maxWidth: 400, maxHeight: 300 });
+            } catch (e) {
+              console.error('Error getting photo URL:', e);
             }
-            
-            const genericData = await genericResponse.json();
-            
-            if (genericData.results && genericData.results.length > 0) {
-              // Use the first generic result
-              const genericResult = genericData.results[0];
-              
-              // Update the place object with search results
-              place.location = genericResult.location;
-              place.address = genericResult.address;
-              place.photoUrl = genericResult.photoUrl;
-              
-              // Navigate to the found place
-              map.current.flyTo({
-                center: [genericResult.location.longitude, genericResult.location.latitude],
-                zoom: 15,
-                essential: true
-              });
-              
-              // Add a marker
-              const markerEl = document.createElement('div');
-              markerEl.className = 'chat-location-marker';
-              markerEl.style.backgroundColor = '#3b82f6';
-              markerEl.style.width = '20px';
-              markerEl.style.height = '20px';
-              markerEl.style.borderRadius = '50%';
-              markerEl.style.border = '2px solid white';
-              markerEl.style.boxShadow = '0 2px 4px rgba(0,0,0,0.3)';
-              
-              const marker = new mapboxgl.Marker({
-                element: markerEl,
-                draggable: false
-              })
-                .setLngLat([genericResult.location.longitude, genericResult.location.latitude])
-                .setPopup(
-                  new mapboxgl.Popup({
-                    offset: 25,
-                    closeButton: true,
-                    maxWidth: '300px'
-                  }).setHTML(`
-                    <div style="min-width: 200px; max-width: 300px;">
-                      <h3 style="font-weight: 600; font-size: 14px; margin-bottom: 5px;">${place.name}</h3>
-                      ${genericResult.photoUrl ? `
-                        <div style="width: 100%; height: 120px; margin-bottom: 8px; overflow: hidden; border-radius: 4px; background-color: #f0f0f0;">
-                          <img 
-                            src="${genericResult.photoUrl}" 
-                            style="width: 100%; height: 100%; object-fit: cover;"
-                            alt="${place.name}"
-                            onerror="this.onerror=null; this.parentNode.innerHTML='<div style=\\'display:flex; align-items:center; justify-content:center; height:100%; color:#666;\\'>No image available</div>';" 
-                          />
-                        </div>
-                      ` : ''}
-                      <p style="font-size: 12px; color: #666; margin-bottom: 8px;">${genericResult.address || ''}</p>
-                      <button id="add-from-chat-btn" style="width: 100%; background-color: #3b82f6; color: white; border: none; padding: 6px; border-radius: 4px; margin-top: 4px; cursor: pointer; font-size: 12px;">Add to Itinerary</button>
-                    </div>
-                  `)
-                )
-                .addTo(map.current);
-                
-              // Open the popup
-              marker.togglePopup();
-              
-              // Add event listener for the add button
-              setTimeout(() => {
-                const addButton = document.getElementById('add-from-chat-btn');
-                if (addButton) {
-                  addButton.addEventListener('click', () => {
-                    if (onAddEvent) {
-                      onAddEvent({
-                        name: place.name,
-                        address: genericResult.address || '',
-                        description: `Visit ${place.name}`,
-                        coordinates: {
-                          latitude: genericResult.location.latitude,
-                          longitude: genericResult.location.longitude
-                        },
-                        category: 'Attraction'
-                      });
-                      marker.togglePopup(); // Close the popup
-                    }
-                  });
-                }
-              }, 100);
-            } else {
-              // If still no results, just show the city center
-              console.error('No results found for place:', place.name);
-              alert(`Couldn't find specific details for ${place.name}. Showing the destination city instead.`);
-              
-              // Fly to city center
-              const cityCenter = {
-                lng: Number(tripDetails?.longitude) || defaultCoords.lng,
-                lat: Number(tripDetails?.latitude) || defaultCoords.lat
-              };
-              
-              map.current.flyTo({
-                center: [cityCenter.lng, cityCenter.lat],
-                zoom: 12,
-                essential: true
-              });
-            }
-          }
-        } catch (error) {
-          console.error('Error searching for place:', error);
-          alert(`Error finding ${place.name} on the map.`);
-        } finally {
-          // Remove loading indicator
-          if (loadingEl && loadingEl.parentNode) {
-            loadingEl.parentNode.removeChild(loadingEl);
           }
         }
-      } catch (err) {
-        console.error('Error navigating to place:', err);
+        
+        // If we don't have valid coordinates, make an API request
+        if (!hasValidCoordinates) {
+          try {
+            // Use the existing API to get fresh data
+            const response = await fetch(`/api/places/search?query=${encodeURIComponent(placeName)}&city=${encodeURIComponent(tripDetails?.city || '')}`);
+            
+            if (!response.ok) {
+              throw new Error(`Failed to search for place: ${response.statusText}`);
+            }
+            
+            const data = await response.json();
+            
+            if (data.results && data.results.length > 0) {
+              const placeResult = data.results[0];
+              
+              // Update coordinates
+              latitude = placeResult.location.latitude;
+              longitude = placeResult.location.longitude;
+              hasValidCoordinates = true;
+              
+              // Update other missing fields
+              if (!address) place.address = placeResult.address;
+              if (!photoUrl) photoUrl = placeResult.photoUrl;
+            }
+          } catch (error) {
+            console.error('Error searching for place:', error);
+          }
+        }
+        
+        // Only proceed if we have valid coordinates
+        if (hasValidCoordinates) {
+          // Navigate to the place
+          map.current.flyTo({
+            center: [longitude, latitude],
+            zoom: 15,
+            essential: true
+          });
+          
+          // Add a marker with better styling
+          const markerEl = document.createElement('div');
+          markerEl.className = 'chat-location-marker';
+          markerEl.style.backgroundColor = '#3b82f6';
+          markerEl.style.width = '20px';
+          markerEl.style.height = '20px';
+          markerEl.style.borderRadius = '50%';
+          markerEl.style.border = '2px solid white';
+          markerEl.style.boxShadow = '0 2px 4px rgba(0,0,0,0.3)';
+          markerEl.title = placeName;
+          
+          // Prepare editorial content if available
+          const editorialContent = place.editorial 
+            ? `<p style="font-size: 12px; margin: 8px 0; font-style: italic; color: #000000;">${place.editorial}</p>` 
+            : '';
+          
+          // Add rating if available
+          const ratingContent = place.rating
+            ? `<p style="font-size: 12px; margin-bottom: 4px; color: #000000;">Rating: ${place.rating} ${place.userRatingCount ? `(${place.userRatingCount} reviews)` : ''}</p>`
+            : '';
+          
+          // Add website if available
+          const websiteContent = place.websiteUri
+            ? `<p style="font-size: 12px; margin-bottom: 4px; color: #000000;"><a href="${place.websiteUri}" target="_blank" style="color: #3b82f6;">Website</a></p>`
+            : '';
+          
+          // Add phone if available
+          const phoneContent = place.phone
+            ? `<p style="font-size: 12px; margin-bottom: 4px; color: #000000;">Phone: ${place.phone}</p>`
+            : '';
+          
+          // Create the popup
+          const marker = new mapboxgl.Marker({
+            element: markerEl,
+            draggable: false
+          })
+            .setLngLat([longitude, latitude])
+            .setPopup(
+              new mapboxgl.Popup({
+                offset: 25,
+                closeButton: true,
+                maxWidth: '300px'
+              }).setHTML(`
+                <div style="min-width: 200px; max-width: 300px;">
+                  <h3 style="font-weight: 600; font-size: 14px; margin-bottom: 5px; color: #000000;">${placeName}</h3>
+                  ${photoUrl ? `
+                    <div style="width: 100%; height: 120px; margin-bottom: 8px; overflow: hidden; border-radius: 4px; background-color: #f0f0f0;">
+                      <img 
+                        src="${photoUrl}" 
+                        style="width: 100%; height: 100%; object-fit: cover;"
+                        alt="${placeName}"
+                        onerror="this.onerror=null; this.parentNode.innerHTML='<div style=\\'display:flex; align-items:center; justify-content:center; height:100%; color:#000000;\\'>No image available</div>';" 
+                      />
+                    </div>
+                  ` : ''}
+                  ${editorialContent}
+                  <p style="font-size: 12px; color: #000000; margin-bottom: 8px;">${address}</p>
+                  ${ratingContent}
+                  ${websiteContent}
+                  ${phoneContent}
+                  <button id="add-from-chat-btn" style="width: 100%; background-color: #3b82f6; color: white; border: none; padding: 6px; border-radius: 4px; margin-top: 4px; cursor: pointer; font-size: 12px;">Add to Itinerary</button>
+                </div>
+              `)
+            )
+            .addTo(map.current);
+            
+          // Open the popup
+          marker.togglePopup();
+          
+          // Add event listener for the add button
+          setTimeout(() => {
+            const addButton = document.getElementById('add-from-chat-btn');
+            if (addButton) {
+              addButton.addEventListener(
+                'click',
+                () => {
+                  addAttractionToItinerary(place);
+                }
+              );
+            }
+          }, 100);
+        } else {
+          // Fall back to searching if we still don't have coordinates
+          try {
+            const genericQuery = `${placeName} in ${tripDetails?.city || ''}`;
+            // Original API call code here...
+            // ... existing code for generic search ...
+            
+            // Remove the loading indicator
+            if (mapContainer.current) {
+              const loadingIndicator = mapContainer.current.querySelector('.loading-indicator');
+              if (loadingIndicator) {
+                loadingIndicator.remove();
+              }
+            }
+            
+            alert(`Could not find coordinates for ${placeName}. Please try a different place.`);
+          } catch (error) {
+            console.error('Error with fallback search:', error);
+          }
+        }
+        
+        // Remove the loading indicator
+        if (mapContainer.current) {
+          const loadingIndicator = mapContainer.current.querySelector('.loading-indicator');
+          if (loadingIndicator) {
+            loadingIndicator.remove();
+          }
+        }
+      } catch (error) {
+        console.error('Error navigating to place:', error);
+        
+        // Remove the loading indicator
+        if (mapContainer.current) {
+          const loadingIndicator = mapContainer.current.querySelector('.loading-indicator');
+          if (loadingIndicator) {
+            loadingIndicator.remove();
+          }
+        }
+        
+        alert(`Error navigating to ${placeName}. Please try again.`);
       }
     }
   }));
@@ -3784,17 +3826,17 @@ export default forwardRef(function MapsView({ tripDetails, onAddEvent }, ref) {
                   >
                     <div className="flex justify-between items-start">
                       <div>
-                        <h3 className="font-medium text-gray-900">{result.name}</h3>
+                        <h3 className="font-medium text-black">{result.name}</h3>
                         {result.vicinity && (
-                          <p className="text-sm text-gray-600 mt-1">{result.vicinity}</p>
+                          <p className="text-sm text-black mt-1">{result.vicinity}</p>
                         )}
                       </div>
                       <div className="flex flex-col items-end">
                         <span className={`inline-block px-2 py-1 text-xs rounded-full ${
-                          result.type === 'hotel' ? 'bg-blue-100 text-blue-800' :
-                          result.type === 'restaurant' ? 'bg-orange-100 text-orange-800' :
-                          result.type === 'activity' ? 'bg-green-100 text-green-800' :
-                          'bg-gray-100 text-gray-800'
+                          result.type === 'hotel' ? 'bg-blue-100 text-blue-900' :
+                          result.type === 'restaurant' ? 'bg-orange-100 text-orange-900' :
+                          result.type === 'activity' ? 'bg-green-100 text-green-900' :
+                          'bg-gray-100 text-gray-900'
                         }`}>
                           {result.type}
                         </span>
@@ -3802,7 +3844,7 @@ export default forwardRef(function MapsView({ tripDetails, onAddEvent }, ref) {
                         {result.rating > 0 && (
                           <div className="flex items-center mt-1">
                             <span className="text-yellow-500 mr-1">★</span>
-                            <span className="text-sm text-gray-600">{result.rating}</span>
+                            <span className="text-sm text-black">{result.rating}</span>
                           </div>
                         )}
                       </div>
@@ -3911,18 +3953,6 @@ export default forwardRef(function MapsView({ tripDetails, onAddEvent }, ref) {
                   </div>
                 </div>
                 
-                {/* Suggestion button */}
-                <button
-                  onClick={handleSuggestNearby}
-                  className={`w-full py-2 px-4 rounded ${
-                    showSuggestionsPanel 
-                      ? 'bg-blue-700 text-white' 
-                      : 'bg-blue-600 hover:bg-blue-700 text-white'
-                  }`}
-                  style={{fontWeight: 600}}
-                >
-                  {showSuggestionsPanel ? 'Hide Suggestions' : 'Suggest Nearby'}
-                </button>
                 
                 {/* Multi-stop Routing Controls */}
                 <div className="bg-white rounded-lg p-4 shadow-sm space-y-3">
@@ -4021,7 +4051,7 @@ export default forwardRef(function MapsView({ tripDetails, onAddEvent }, ref) {
                   <div className="absolute inset-0 flex items-center justify-center bg-gray-100 bg-opacity-80 z-10">
                     <div className="bg-white p-4 rounded-lg shadow-lg text-center">
                       <p className="text-red-500 mb-2">Map failed to initialize</p>
-                      <p className="text-sm text-gray-600 mb-3">
+                      <p className="text-sm text-black mb-3">
                         This may be due to missing API keys or network issues.
                         {MAPBOX_TOKEN === 'pk.placeholder_token' && 
                           " The Mapbox API key is missing or invalid."}
@@ -4060,7 +4090,7 @@ export default forwardRef(function MapsView({ tripDetails, onAddEvent }, ref) {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg p-6 w-full max-w-md">
             <div className="flex justify-between items-center mb-4">
-              <h3 className="text-lg font-bold text-gray-800">Add to Calendar</h3>
+              <h3 className="text-lg font-bold text-black">Add to Calendar</h3>
               <button 
                 onClick={() => setIsEventModalOpen(false)}
                 className="text-gray-400 hover:text-gray-600"
@@ -4073,24 +4103,24 @@ export default forwardRef(function MapsView({ tripDetails, onAddEvent }, ref) {
             
             <div className="space-y-4">
               <div>
-                <label htmlFor="event-name" className="block text-sm font-medium text-gray-700 mb-1">Name</label>
+                <label htmlFor="event-name" className="block text-sm font-medium text-black mb-1">Name</label>
                 <input
                   id="event-name"
                   type="text"
                   value={eventDetails.name}
                   onChange={(e) => setEventDetails({...eventDetails, name: e.target.value})}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-900"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-black"
                 />
               </div>
               
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label htmlFor="event-day" className="block text-sm font-medium text-gray-700 mb-1">Day</label>
+                  <label htmlFor="event-day" className="block text-sm font-medium text-black mb-1">Day</label>
                   <select
                     id="event-day"
                     value={eventDetails.day}
                     onChange={(e) => setEventDetails({...eventDetails, day: Number(e.target.value)})}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-900"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-black"
                   >
                     {Array.from({ length: tripDetails?.numberOfDays || 7 }).map((_, index) => (
                       <option key={index} value={index}>Day {index + 1}</option>
@@ -4099,12 +4129,12 @@ export default forwardRef(function MapsView({ tripDetails, onAddEvent }, ref) {
                 </div>
                 
                 <div>
-                  <label htmlFor="event-type" className="block text-sm font-medium text-gray-700 mb-1">Type</label>
+                  <label htmlFor="event-type" className="block text-sm font-medium text-black mb-1">Type</label>
                   <select
                     id="event-type"
                     value={eventDetails.type}
                     onChange={(e) => setEventDetails({...eventDetails, type: e.target.value})}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-900"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-black"
                   >
                     <option value="activity">Activity</option>
                     <option value="restaurant">Restaurant</option>
@@ -4116,12 +4146,12 @@ export default forwardRef(function MapsView({ tripDetails, onAddEvent }, ref) {
               
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label htmlFor="event-time" className="block text-sm font-medium text-gray-700 mb-1">Start Time</label>
+                  <label htmlFor="event-time" className="block text-sm font-medium text-black mb-1">Start Time</label>
                   <select
                     id="event-time"
                     value={eventDetails.startTime}
                     onChange={(e) => setEventDetails({...eventDetails, startTime: e.target.value})}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-900"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-black"
                   >
                     {Array.from({ length: 24 }).map((_, hour) => (
                       <option key={hour} value={`${hour.toString().padStart(2, '0')}:00`}>
@@ -4132,12 +4162,12 @@ export default forwardRef(function MapsView({ tripDetails, onAddEvent }, ref) {
                 </div>
                 
                 <div>
-                  <label htmlFor="event-duration" className="block text-sm font-medium text-gray-700 mb-1">Duration (min)</label>
+                  <label htmlFor="event-duration" className="block text-sm font-medium text-black mb-1">Duration (min)</label>
                   <select
                     id="event-duration"
                     value={eventDetails.duration}
                     onChange={(e) => setEventDetails({...eventDetails, duration: Number(e.target.value)})}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-900"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-black"
                   >
                     <option value="30">30 min</option>
                     <option value="60">1 hour</option>
@@ -4150,13 +4180,13 @@ export default forwardRef(function MapsView({ tripDetails, onAddEvent }, ref) {
               </div>
               
               <div>
-                <label htmlFor="event-location" className="block text-sm font-medium text-gray-700 mb-1">Location</label>
+                <label htmlFor="event-location" className="block text-sm font-medium text-black mb-1">Location</label>
                 <input
                   id="event-location"
                   type="text"
                   value={eventDetails.location}
                   onChange={(e) => setEventDetails({...eventDetails, location: e.target.value})}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-900"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-black"
                 />
               </div>
               
@@ -4164,7 +4194,7 @@ export default forwardRef(function MapsView({ tripDetails, onAddEvent }, ref) {
                 <button
                   type="button"
                   onClick={() => setIsEventModalOpen(false)}
-                  className="px-4 py-2 bg-gray-200 text-gray-800 rounded-md mr-2 hover:bg-gray-300"
+                  className="px-4 py-2 bg-gray-200 text-black rounded-md mr-2 hover:bg-gray-300"
                 >
                   Cancel
                 </button>
