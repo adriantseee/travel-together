@@ -3561,7 +3561,7 @@ export default forwardRef(function MapsView({ tripDetails, onAddEvent }, ref) {
   }));
 
   return (
-    <div className="h-full w-full flex flex-col bg-white overflow-auto">
+    <div className="min-h-screen w-full flex flex-col bg-white">
       <style>
         {`
           ${mapStyles}
@@ -3606,7 +3606,8 @@ export default forwardRef(function MapsView({ tripDetails, onAddEvent }, ref) {
           
           /* Fix for scrolling issues - make everything one scrollable page */
           html, body, #__next, main {
-            height: 100%;
+            min-height: 100vh;
+            height: auto;
             overflow-y: auto !important;
           }
           
@@ -3614,19 +3615,17 @@ export default forwardRef(function MapsView({ tripDetails, onAddEvent }, ref) {
           .maps-view-container {
             display: flex;
             flex-direction: column;
-            height: 100%;
-            overflow-y: auto;
-            position: relative;
+            min-height: 0; /* Prevent flex container from expanding */
             flex: 1;
+            position: relative;
           }
           
-          /* Controls wrapper - allow content to flow */
+          /* Controls wrapper - make it scrollable */
           .controls-wrapper {
-            overflow-y: visible;
+            height: auto;
+            overflow-y: auto;
             padding-right: 5px;
             -webkit-overflow-scrolling: touch;
-            height: auto;
-            min-height: 0;
           }
           
           /* Improved text styling for better visibility */
@@ -3872,7 +3871,7 @@ export default forwardRef(function MapsView({ tripDetails, onAddEvent }, ref) {
         </div>
       )}
       
-      <div className="flex-1 p-4 flex flex-col maps-view-container">
+      <div className="flex-1 p-4 flex flex-col">
         {isLoading ? (
           <div className="h-full flex items-center justify-center">
             <div className="flex flex-col items-center">
