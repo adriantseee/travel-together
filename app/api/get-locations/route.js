@@ -55,7 +55,6 @@ export async function POST(request) {
     // Note: generateQueries expects userInput, not message
     const queries = await getLocations(message, tripDetails);
     
-    // Return the response - now possibly includes rawPlaceList and curatedResults
     return NextResponse.json({ queries });
   } catch (error) {
     console.error('Error in get-locations route:', error);
