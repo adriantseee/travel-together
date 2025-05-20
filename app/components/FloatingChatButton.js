@@ -277,21 +277,54 @@ const FloatingChatButton = ({ onAddEvent, tripDetails, navigateToMapLocation }) 
 
   const handleViewOnMap = (place) => {
     if (navigateToMapLocation) {
+      console.log("Place data for map navigation:", place);
+      
+      // For direct Google Places data
+      const rawPlaceData = place.placeData || place;
+      
       // Ensure we're passing all the location data in the expected format
       const locationData = {
-        id: place.id,
-        name: place.name,
-        location: place.location,
-        coordinates: place.location,  // For backward compatibility
-        address: place.formattedAddress,
-        formattedAddress: place.formattedAddress,  // Both formats for compatibility
-        rating: place.rating?.value || place.rating,
-        websiteUri: place.websiteUri,
-        phone: place.nationalPhoneNumber || place.internationalPhoneNumber,
-        priceLevel: place.priceLevel,
-        photos: place.photos,
-        types: place.types
+        id: place.id || rawPlaceData.id,
+        name: place.name || rawPlaceData.displayName?.text || rawPlaceData.name || 'Unknown location',
+        
+        // Handle location data in different formats
+        location: rawPlaceData.location || place.location || {
+          latitude: null,
+          longitude: null
+        },
+        
+        // For backward compatibility
+        coordinates: rawPlaceData.location || place.location,
+        
+        // Address information
+        address: rawPlaceData.formattedAddress || place.formattedAddress,
+        formattedAddress: rawPlaceData.formattedAddress || place.formattedAddress,
+        
+        // Contact and metadata
+        rating: rawPlaceData.rating?.value || rawPlaceData.rating || place.rating,
+        websiteUri: rawPlaceData.websiteUri || place.websiteUri,
+        phone: rawPlaceData.nationalPhoneNumber || rawPlaceData.internationalPhoneNumber || place.nationalPhoneNumber,
+        priceLevel: rawPlaceData.priceLevel || place.priceLevel,
+        
+        // Media and categorization
+        photos: rawPlaceData.photos || place.photos,
+        types: rawPlaceData.types || place.types,
+        
+        // Business details
+        businessStatus: rawPlaceData.businessStatus || place.businessStatus,
+        
+        // Any additional fields that might be available
+        displayName: rawPlaceData.displayName || null,
+        userRatingCount: rawPlaceData.rating?.userRatingCount || place.userRatingCount
       };
+      
+      // Add editorial content if available
+      if (place.editorial) {
+        locationData.editorial = place.editorial;
+      }
+      
+      // Log the final data we're sending to map
+      console.log("Sending to map:", locationData);
       
       navigateToMapLocation(locationData);
       
@@ -353,72 +386,75 @@ const FloatingChatButton = ({ onAddEvent, tripDetails, navigateToMapLocation }) 
       let formattedResponse = "";
       let locationsToShow = [];
       
-      // Check if we received place data or just queries
-      if (data.queries && typeof data.queries === 'object' && !Array.isArray(data.queries)) {
-        // We received a placeList object with query -> places mapping
-        const placeList = data.queries;
-        formattedResponse = "Here are some places you might be interested in:\n\n";
+      // Check if we received the enhanced data format with curated results
+      if (data.queries && data.queries.curatedResults) {
+        const { curatedResults, rawPlaceList } = data.queries;
         
-        // Process place data for display and mapping
-        Object.entries(placeList).forEach(([query, places], queryIndex) => {
-          // Format the query results for the chat message
-          formattedResponse += `**${query}**:\n`;
-          
-          // If places is a string (from older version), convert to array for consistency
-          if (typeof places === 'string') {
-            formattedResponse += places + "\n\n";
-          } else if (Array.isArray(places)) {
-            // Extract places for mapping and add clickable links in chat
-            places.forEach((place, index) => {
-              // Store place for map navigation
-              if (place && typeof place === 'object') {
-                // Generate ID for linking in the text
-                const placeId = `place-${queryIndex}-${index}`;
-                
-                // Add place with ID to our locations array
-                const placeToAdd = {
-                  id: placeId,
-                  name: place.displayName?.text || place.name || 'Unknown location',
-                  location: {
-                    latitude: place.location?.latitude,
-                    longitude: place.location?.longitude
-                  },
-                  formattedAddress: place.formattedAddress,
-                  rating: place.rating?.value,
-                  userRatingCount: place.rating?.userRatingCount,
-                  priceLevel: place.priceLevel,
-                  websiteUri: place.websiteUri,
-                  nationalPhoneNumber: place.nationalPhoneNumber,
-                  types: place.types,
-                  photos: place.photos,
-                  source: 'google'
-                };
-                
-                locationsToShow.push(placeToAdd);
-                
-                // Add clickable link in the text
-                formattedResponse += `• [${placeToAdd.name}](map:${placeId})\n`;
-                if (place.formattedAddress) {
-                  formattedResponse += `  ${place.formattedAddress}\n`;
-                }
-                if (place.rating?.value) {
-                  formattedResponse += `  Rating: ${place.rating.value}${place.rating.userRatingCount ? ` (${place.rating.userRatingCount} reviews)` : ''}\n`;
-                }
-                formattedResponse += '\n';
-              } else {
-                // Fallback for simple string entries
-                formattedResponse += `• ${place}\n`;
-              }
-            });
-          }
-        });
-        
-        if (Object.keys(placeList).length === 0) {
-          formattedResponse = "I couldn't find any specific locations based on your request. Could you try asking in a different way?";
+        // If we have editorial content, show it first
+        if (curatedResults.editorialContent) {
+          formattedResponse = `${curatedResults.editorialContent}\n\n`;
         } else {
-          // Add a note about clicking locations
-          formattedResponse += "\nYou can click on any location name to view it on the map.";
+          formattedResponse = "Based on your request, I've found some places you might enjoy:\n\n";
         }
+        
+        // Process curated places
+        if (curatedResults.curatedPlaces && curatedResults.curatedPlaces.length > 0) {
+          curatedResults.curatedPlaces.forEach((place, index) => {
+            // Add place to our locations array for map navigation
+            const placeId = `curated-${index}`;
+            const placeData = place.placeData || {};
+            
+            // Handle different place formats (direct or nested displayName)
+            const placeName = placeData.name || 
+                             (placeData.displayName ? placeData.displayName.text : '') || 
+                             place.name || 
+                             'Unknown location';
+
+            // Handle different location formats
+            const placeLocation = placeData.location || {
+              latitude: null,
+              longitude: null
+            };
+            
+            // Add place with ID to our locations array
+            const placeToAdd = {
+              // Preserve all original data
+              ...placeData,
+              
+              // Add necessary fields for display
+              id: placeData.id || placeId,
+              name: placeName,
+              
+              // Only override location if not already present
+              location: placeData.location || placeLocation,
+              
+              // Editorial content from AI
+              editorial: place.editorial
+            };
+            
+            locationsToShow.push(placeToAdd);
+            
+            // Add formatted place info to the response
+            formattedResponse += `**${place.name}**\n`;
+            formattedResponse += `${place.editorial}\n`;
+            
+            // Add a link to view on map
+            formattedResponse += `[View on map](map:${placeToAdd.id})\n\n`;
+          });
+          
+          // Add a note about clicking locations
+          formattedResponse += "You can click on 'View on map' to see any location on the map.";
+        } else {
+          // Fallback to raw place list if no curated places
+          const processed = processRawPlaceList(rawPlaceList);
+          formattedResponse = processed.formattedResponse;
+          locationsToShow = processed.locationsToShow;
+        }
+      } else if (data.queries && typeof data.queries === 'object' && !Array.isArray(data.queries)) {
+        // Fallback to processing the old format
+        const processed = processRawPlaceList(data.queries);
+        formattedResponse = processed.formattedResponse;
+        locationsToShow = processed.locationsToShow;
       } else if (data.queries && Array.isArray(data.queries)) {
         // We just got query strings back
         formattedResponse = `Here are some interesting things to check out:\n\n${data.queries.join("\n")}`;
@@ -465,6 +501,82 @@ const FloatingChatButton = ({ onAddEvent, tripDetails, navigateToMapLocation }) 
       });
       setIsGenerating(false);
     }
+  };
+
+  // Helper function to process raw place list (original format)
+  const processRawPlaceList = (placeList) => {
+    let formattedResponse = "Here are some places you might be interested in:\n\n";
+    let locationsToShow = [];
+    
+    // Process place data for display and mapping
+    Object.entries(placeList).forEach(([query, places], queryIndex) => {
+      // Format the query results for the chat message
+      formattedResponse += `**${query}**:\n`;
+      
+      // If places is a string (from older version), convert to array for consistency
+      if (typeof places === 'string') {
+        formattedResponse += places + "\n\n";
+      } else if (Array.isArray(places)) {
+        // Extract places for mapping and add clickable links in chat
+        places.forEach((place, index) => {
+          // Store place for map navigation
+          if (place && typeof place === 'object') {
+            // Generate ID for linking in the text
+            const placeId = `place-${queryIndex}-${index}`;
+            
+            // Get place name from either format
+            const placeName = place.displayName?.text || place.name || 'Unknown location';
+            
+            // Get location from either format
+            const placeLocation = place.location || {
+              latitude: null,
+              longitude: null
+            };
+            
+            // Get rating from either format
+            const placeRating = place.rating?.value || place.rating || null;
+            const ratingCount = place.rating?.userRatingCount || null;
+            
+            // Add place with ID to our locations array
+            const placeToAdd = {
+              // Preserve all original data
+              ...place,
+              
+              // Add necessary fields for display
+              id: place.id || placeId,
+              name: placeName,
+              
+              // Only override location if not already present
+              location: place.location || placeLocation
+            };
+            
+            locationsToShow.push(placeToAdd);
+            
+            // Add clickable link in the text
+            formattedResponse += `• [${placeToAdd.name}](map:${placeId})\n`;
+            if (place.formattedAddress) {
+              formattedResponse += `  ${place.formattedAddress}\n`;
+            }
+            if (place.rating?.value) {
+              formattedResponse += `  Rating: ${place.rating.value}${place.rating.userRatingCount ? ` (${place.rating.userRatingCount} reviews)` : ''}\n`;
+            }
+            formattedResponse += '\n';
+          } else {
+            // Fallback for simple string entries
+            formattedResponse += `• ${place}\n`;
+          }
+        });
+      }
+    });
+    
+    if (Object.keys(placeList).length === 0) {
+      formattedResponse = "I couldn't find any specific locations based on your request. Could you try asking in a different way?";
+    } else {
+      // Add a note about clicking locations
+      formattedResponse += "You can click on any location name to view it on the map.";
+    }
+    
+    return { formattedResponse, locationsToShow };
   };
 
   // Enhanced handler to extract location ID and navigate to map
@@ -556,6 +668,7 @@ const FloatingChatButton = ({ onAddEvent, tripDetails, navigateToMapLocation }) 
         /* Make the bot messages better */
         .bot-message {
           line-height: 1.5;
+          color: #000000;
         }
         
         .bot-message a {
@@ -570,6 +683,12 @@ const FloatingChatButton = ({ onAddEvent, tripDetails, navigateToMapLocation }) 
         
         .bot-message strong {
           font-weight: 600;
+          color: #000000;
+        }
+
+        /* Update placeholder color */
+        textarea::placeholder {
+          color: #6B7280;
         }
       `}</style>
       
@@ -610,7 +729,7 @@ const FloatingChatButton = ({ onAddEvent, tripDetails, navigateToMapLocation }) 
                     className={`inline-block px-3 py-2 rounded-lg max-w-[80%]
                       ${msg.isUser 
                         ? 'bg-blue-600 text-white' 
-                        : 'bg-gray-200 text-gray-800 bot-message'}`}
+                        : 'bg-gray-200 text-black bot-message'}`}
                     onClick={handleMessageClick}
                     dangerouslySetInnerHTML={msg.isUser ? null : { __html: formatMessageText(msg.text) }}
                   >
@@ -628,7 +747,7 @@ const FloatingChatButton = ({ onAddEvent, tripDetails, navigateToMapLocation }) 
                 onChange={(e) => setMessage(e.target.value)}
                 onKeyPress={handleKeyPress}
                 placeholder="Ask about places to visit or things to do..."
-                className="flex-1 border rounded-l-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                className="flex-1 border rounded-l-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none text-black placeholder-gray-500"
                 rows="2"
                 disabled={isGenerating}
               />
