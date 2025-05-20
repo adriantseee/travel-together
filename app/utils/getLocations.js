@@ -1,7 +1,7 @@
 import Together from "together-ai";
 const {PlacesClient} = require('@googlemaps/places').v1;
 // Initialize Together client with API key from environment variables
-const TOGETHER_API_KEY = process.env.TOGETHER_API_KEY || "tgp_v1_ab9-aj1HMGApkAIJn6kDYk-B1mC_Eza9UFIb2VVW7Ng";
+const TOGETHER_API_KEY = process.env.NEXT_PUBLIC_TOGETHER_API_KEY || "tgp_v1_ab9-aj1HMGApkAIJn6kDYk-B1mC_Eza9UFIb2VVW7Ng";
 const together = new Together({
   apiKey: TOGETHER_API_KEY
 });

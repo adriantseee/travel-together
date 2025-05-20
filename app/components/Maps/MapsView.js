@@ -139,7 +139,7 @@ const renderFallbackMap = (container, center) => {
     // First make sure container is visible and properly sized
     container.style.width = '100%';
     container.style.height = '100%';
-    container.style.minHeight = '400px';
+    container.style.minHeight = '500px';
     container.style.position = 'relative';
     
     // Clear any existing content
@@ -744,12 +744,13 @@ export default forwardRef(function MapsView({ tripDetails, onAddEvent }, ref) {
         return false;
       }
       
-      // Make container visible and ensure it has dimensions
+      // Make container visible and ensure it has fixed dimensions
       container.style.width = '100%';
-      container.style.minHeight = '500px';
-      container.style.height = '100%';
+      container.style.height = '100%'; // Fixed height
       container.style.position = 'relative';
-      container.style.display = 'block'; // Ensure it's visible
+      container.style.display = 'block';
+      
+      // Rest of initialization code...
       
       // Check if container has actual dimensions
       const containerWidth = container.offsetWidth;
@@ -1147,7 +1148,7 @@ export default forwardRef(function MapsView({ tripDetails, onAddEvent }, ref) {
         
         // Force container to have explicit dimensions
         containerElement.style.width = '100%';
-        containerElement.style.height = '500px';
+        containerElement.style.height = '100%'; // Fixed height
         containerElement.style.position = 'relative';
         
         // Check WebGL support more thoroughly
@@ -3580,17 +3581,18 @@ export default forwardRef(function MapsView({ tripDetails, onAddEvent }, ref) {
           
           /* Styles for embedded map container */
           .map-container-wrapper {
-            flex: 1;
-            min-height: 500px;
-            max-height: 75vh;
+            height: 75vh;  /* Changed from 600px */
+            width: 85vw;
             position: relative;
-            min-width: 500px;
             background-color: #e9eef2;
             border-radius: 0.5rem;
             overflow: hidden;
             border: 1px solid #d1d5db;
           }
-          
+          .mapbox-container{
+            height: 100%;
+            width: 100%;
+          }
           .map-container {
             position: absolute;
             top: 0;
@@ -3599,8 +3601,6 @@ export default forwardRef(function MapsView({ tripDetails, onAddEvent }, ref) {
             bottom: 0;
             width: 100%;
             height: 100%;
-            min-height: 500px;
-            min-width: 500px;
             background-color: #e9eef2;
           }
           
@@ -3620,11 +3620,13 @@ export default forwardRef(function MapsView({ tripDetails, onAddEvent }, ref) {
             flex: 1;
           }
           
-          /* Disable nested scrolling containers */
+          /* Controls wrapper - allow content to flow */
           .controls-wrapper {
             overflow-y: visible;
             padding-right: 5px;
             -webkit-overflow-scrolling: touch;
+            height: auto;
+            min-height: 0;
           }
           
           /* Improved text styling for better visibility */
@@ -3881,9 +3883,9 @@ export default forwardRef(function MapsView({ tripDetails, onAddEvent }, ref) {
         ) : (
           <div className="h-full flex flex-col md:flex-row space-y-4 md:space-y-0 md:space-x-4">
             {/* Map Controls */}
-            <div className="w-full md:w-64">
-              <div className="space-y-4">
-                {/* Day selector */}
+            <div className="w-full md:w-64 overflow-y-scroll max-h-[calc(100vh-2em)] pr-2 sticky top-0">
+              <div className="space-y-4 pb-4">
+                {/* Day selector 
                 <div className="bg-white rounded-lg p-4 shadow-sm">
                   <h3 className="font-semibold text-gray-800 mb-2">Select Day</h3>
                   <div className="flex flex-wrap gap-2">
@@ -3901,7 +3903,7 @@ export default forwardRef(function MapsView({ tripDetails, onAddEvent }, ref) {
                       </button>
                     ))}
                   </div>
-                </div>
+                </div>*/}
                 
                 {/* Layer toggles */}
                 <div className="bg-white rounded-lg p-4 shadow-sm">
