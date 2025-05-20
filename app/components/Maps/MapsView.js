@@ -63,8 +63,8 @@ const transportColors = {
 
 // Use environment variables for the API tokens
 // Fallback to placeholders if not available
-const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN || 'pk.placeholder_token';
-const GOOGLE_MAPS_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_API_KEY || 'your_google_api_key';
+const MAPBOX_TOKEN = process.env.MAPBOX_TOKEN || 'pk.placeholder_token';
+const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_API_KEY || 'your_google_api_key';
 
 // Debug environment variables
 console.log('Environment check for tokens:', {
@@ -1779,7 +1779,7 @@ export default forwardRef(function MapsView({ tripDetails, onAddEvent }, ref) {
         photoUrl = photoObj;
       } else if (photoObj.name) {
         // Handle Google Places API v1 photo name format
-        const GOOGLE_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_API_KEY || '';
+        const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY || '';
         photoUrl = `https://places.googleapis.com/v1/${photoObj.name}/media?key=${GOOGLE_API_KEY}&maxHeightPx=400&maxWidthPx=400`;
       } else if (photoObj.getUrl && typeof photoObj.getUrl === 'function') {
         try {
@@ -2006,7 +2006,7 @@ export default forwardRef(function MapsView({ tripDetails, onAddEvent }, ref) {
                         } 
                         // Handle Google Places API v1 photo name format
                         else if (photo.name) {
-                          const GOOGLE_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_API_KEY || '';
+                          const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY || '';
                           return `https://places.googleapis.com/v1/${photo.name}/media?key=${GOOGLE_API_KEY}&maxHeightPx=400&maxWidthPx=400`;
                         }
                         // Fall back to photo_reference if available (API v2)
@@ -2937,7 +2937,7 @@ export default forwardRef(function MapsView({ tripDetails, onAddEvent }, ref) {
                       } 
                       // Handle Google Places API v1 photo name format
                       else if (photo.name) {
-                        const GOOGLE_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_API_KEY || '';
+                        const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY || '';
                         return `https://places.googleapis.com/v1/${photo.name}/media?key=${GOOGLE_API_KEY}&maxHeightPx=400&maxWidthPx=400`;
                       }
                       // Fall back to photo_reference if available (API v2)
@@ -3092,7 +3092,7 @@ export default forwardRef(function MapsView({ tripDetails, onAddEvent }, ref) {
               photoUrl = photoObj;
             } else if (photoObj.name) {
               // Handle Google Places API v1 photo name format
-              const GOOGLE_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_API_KEY || '';
+              const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY || '';
               photoUrl = `https://places.googleapis.com/v1/${photoObj.name}/media?key=${GOOGLE_API_KEY}&maxHeightPx=400&maxWidthPx=400`;
             } else if (photoObj.getUrl && typeof photoObj.getUrl === 'function') {
               try {
@@ -3385,7 +3385,7 @@ export default forwardRef(function MapsView({ tripDetails, onAddEvent }, ref) {
           } else if (firstPhoto.name) {
             // Handle Google Places API v1 photo name format
             // Format: "places/{place_id}/photos/{photo_id}"
-            const GOOGLE_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_API_KEY || '';
+            const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY || '';
             photoUrl = `https://places.googleapis.com/v1/${firstPhoto.name}/media?key=${GOOGLE_API_KEY}&maxHeightPx=400&maxWidthPx=400`;
           } else if (firstPhoto.getUrl && typeof firstPhoto.getUrl === 'function') {
             try {

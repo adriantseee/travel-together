@@ -19,7 +19,7 @@ export async function GET(request) {
     const searchQuery = city ? `${query} in ${city}` : query;
     
     // Get the API key from environment variables
-    const apiKey = process.env.NEXT_PUBLIC_GOOGLE_API_KEY;
+    const apiKey = process.env.GOOGLE_API_KEY;
     
     if (!apiKey) {
       return new Response(
